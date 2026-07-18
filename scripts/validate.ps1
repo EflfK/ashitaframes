@@ -16,10 +16,14 @@ $configText = Get-Content -LiteralPath $config -Raw
 
 $required = @(
     "addon.name",
+    "ashita.events.register('d3d_beginscene'",
     "ashita.events.register('d3d_present'",
     "ashita.events.register('command'",
     "memory:GetParty()",
-    "memory:GetTarget()"
+    "memory:GetTarget()",
+    "memory:GetEntity()",
+    "world_to_screen",
+    "GetLocalPositionX"
 )
 
 foreach ($needle in $required) {
