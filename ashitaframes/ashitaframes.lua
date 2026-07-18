@@ -1,13 +1,18 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.1.1';
+addon.version   = '0.2.1';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
 require('common');
 
+local bit   = require('bit');
 local chat  = require('chat');
+local d3d8  = require('d3d8');
+local ffi   = require('ffi');
 local imgui = require('imgui');
+
+local d3d8_device = nil;
 
 local JOBS = {
     [0]  = '',
@@ -46,12 +51,14 @@ local DEFAULT_SETTINGS = {
     show_jobs = true,
     show_percent = true,
     show_tp = true,
+    show_buffs = true,
+    max_buffs = 8,
     party_window_x = 36,
     party_window_y = 362,
     target_window_x = 36,
     target_window_y = 296,
     frame_width = 232,
-    row_height = 42,
+    row_height = 56,
     row_gap = 5,
     opacity = 88,
 };
@@ -76,13 +83,23 @@ local COLORS = {
     warning = { 1.00, 0.56, 0.26, 1.00 },
 };
 
+local BUFF_ICON_SIZE = 18;
+local BUFF_ICON_GAP = 4;
+local BUFF_ICON_FILES = {
+    protect = 'protect_1.png',
+    shell = 'shell_1.png',
+};
+
 local LIMITS = {
     width_min = 170,
     width_max = 360,
     row_height_min = 32,
-    row_height_max = 64,
+    row_height_with_buffs_min = 54,
+    row_height_max = 84,
     row_gap_min = 0,
     row_gap_max = 14,
+    max_buffs_min = 1,
+    max_buffs_max = 16,
     opacity_min = 35,
     opacity_max = 100,
 };
@@ -92,6 +109,8 @@ local state = {
     visible = { true },
     config_visible = { false },
     config_error = nil,
+    buff_name_cache = { },
+    buff_icon_cache = { },
     party_window_x = 36,
     party_window_y = 362,
     target_window_x = 36,
@@ -189,14 +208,17 @@ local function normalize_settings(settings)
     settings.show_jobs = settings.show_jobs ~= false;
     settings.show_percent = settings.show_percent ~= false;
     settings.show_tp = settings.show_tp ~= false;
+    settings.show_buffs = settings.show_buffs ~= false;
 
     settings.party_window_x = clamp_int(settings.party_window_x, -2000, 4000);
     settings.party_window_y = clamp_int(settings.party_window_y, -2000, 4000);
     settings.target_window_x = clamp_int(settings.target_window_x, -2000, 4000);
     settings.target_window_y = clamp_int(settings.target_window_y, -2000, 4000);
     settings.frame_width = clamp_int(settings.frame_width, LIMITS.width_min, LIMITS.width_max);
-    settings.row_height = clamp_int(settings.row_height, LIMITS.row_height_min, LIMITS.row_height_max);
+    local row_height_min = settings.show_buffs and LIMITS.row_height_with_buffs_min or LIMITS.row_height_min;
+    settings.row_height = clamp_int(settings.row_height, row_height_min, LIMITS.row_height_max);
     settings.row_gap = clamp_int(settings.row_gap, LIMITS.row_gap_min, LIMITS.row_gap_max);
+    settings.max_buffs = clamp_int(settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
     settings.opacity = clamp_int(settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max);
 
     return settings;
@@ -285,6 +307,185 @@ local function job_label(main_job, main_level, sub_job, sub_level)
     return main_text;
 end
 
+local function append_buff_id(result, seen, value)
+    local buff_id = tonumber(value);
+    if (buff_id == nil or buff_id <= 0 or buff_id == 255 or buff_id > 0x3FF or seen[buff_id]) then
+        return;
+    end
+
+    seen[buff_id] = true;
+    table.insert(result, buff_id);
+end
+
+local function player_buffs()
+    local player = safe_read(function () return AshitaCore:GetMemoryManager():GetPlayer(); end, nil);
+    local icons = player ~= nil and safe_read(function () return player:GetStatusIcons(); end, nil) or nil;
+    local result = { };
+    local seen = { };
+
+    if (icons == nil) then
+        return result;
+    end
+
+    for index = 1, 32, 1 do
+        local buff_id = safe_read(function () return icons[index]; end, nil);
+        if (buff_id == 255) then
+            break;
+        end
+
+        append_buff_id(result, seen, buff_id);
+    end
+
+    return result;
+end
+
+local function party_status_buffs(server_id)
+    server_id = tonumber(server_id) or 0;
+    if (server_id == 0) then
+        return { };
+    end
+
+    local pointer_manager = safe_read(function () return AshitaCore:GetPointerManager(); end, nil);
+    local pointer = pointer_manager ~= nil and safe_read(function () return pointer_manager:Get('party.statusicons'); end, 0) or 0;
+    local base = pointer ~= 0 and safe_read(function () return ashita.memory.read_uint32(pointer); end, 0) or 0;
+    if (base == 0) then
+        return { };
+    end
+
+    for member_index = 0, 4, 1 do
+        local member_ptr = base + (0x30 * member_index);
+        local player_id = safe_read(function () return ashita.memory.read_uint32(member_ptr); end, 0);
+        if (player_id == server_id) then
+            local result = { };
+            local seen = { };
+
+            for buff_index = 0, 31, 1 do
+                local high_bits = safe_read(function () return ashita.memory.read_uint8(member_ptr + 8 + math.floor(buff_index / 4)); end, 0);
+                local shift = math.fmod(buff_index, 4) * 2;
+                high_bits = bit.lshift(bit.band(bit.rshift(high_bits, shift), 0x03), 8);
+
+                local low_bits = safe_read(function () return ashita.memory.read_uint8(member_ptr + 16 + buff_index); end, 255);
+                local buff_id = high_bits + low_bits;
+                if (buff_id == 255) then
+                    break;
+                end
+
+                append_buff_id(result, seen, buff_id);
+            end
+
+            return result;
+        end
+    end
+
+    return { };
+end
+
+local function party_member_buffs(party, index, server_id, same_zone)
+    if (not state.settings.show_buffs or index > 5 or same_zone == false) then
+        return { };
+    end
+
+    if (index == 0) then
+        return player_buffs();
+    end
+
+    return party_status_buffs(server_id);
+end
+
+local function buff_name(buff_id)
+    buff_id = tonumber(buff_id) or 0;
+    if (state.buff_name_cache[buff_id] ~= nil) then
+        return state.buff_name_cache[buff_id];
+    end
+
+    local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
+    local name = resources ~= nil and clean_string(safe_read(function () return resources:GetString('buffs.names', buff_id); end, '')) or '';
+    if (#name == 0) then
+        name = ('#%d'):fmt(buff_id);
+    end
+
+    state.buff_name_cache[buff_id] = name;
+    return name;
+end
+
+local function ensure_d3d_device()
+    if (d3d8_device == nil) then
+        d3d8_device = safe_read(function () return d3d8.get_device(); end, nil);
+    end
+
+    return d3d8_device;
+end
+
+local function load_buff_icon(filename)
+    if (state.buff_icon_cache[filename] == false) then
+        return nil;
+    end
+    if (state.buff_icon_cache[filename] ~= nil) then
+        return state.buff_icon_cache[filename];
+    end
+
+    local device = ensure_d3d_device();
+    if (device == nil) then
+        return nil;
+    end
+
+    local path = ('%s/icons/%s'):fmt(addon.path, filename);
+    local texture_ptr = ffi.new('IDirect3DTexture8*[1]');
+    local result = safe_read(function () return ffi.C.D3DXCreateTextureFromFileA(device, path, texture_ptr); end, nil);
+    if (result ~= 0 or texture_ptr[0] == nil) then
+        state.buff_icon_cache[filename] = false;
+        return nil;
+    end
+
+    local texture = d3d8.gc_safe_release(ffi.cast('IDirect3DTexture8*', texture_ptr[0]));
+    local icon = {
+        texture = texture,
+        handle = tonumber(ffi.cast('uint32_t', texture)),
+    };
+
+    state.buff_icon_cache[filename] = icon;
+    return icon;
+end
+
+local function buff_icon_file(buff_id)
+    local name = buff_name(buff_id):lower();
+    if (name:find('protect', 1, true) ~= nil) then
+        return BUFF_ICON_FILES.protect;
+    end
+    if (name:find('shell', 1, true) ~= nil) then
+        return BUFF_ICON_FILES.shell;
+    end
+
+    return nil;
+end
+
+local function buff_icon_items(buffs)
+    local items = { };
+    if (type(buffs) ~= 'table' or #buffs == 0) then
+        return items;
+    end
+
+    local max_buffs = state.settings.max_buffs or DEFAULT_SETTINGS.max_buffs;
+    for index = 1, #buffs, 1 do
+        if (#items >= max_buffs) then
+            break;
+        end
+
+        local buff_id = buffs[index];
+        local filename = buff_icon_file(buff_id);
+        local icon = filename ~= nil and load_buff_icon(filename) or nil;
+        if (icon ~= nil) then
+            table.insert(items, {
+                id = buff_id,
+                name = buff_name(buff_id),
+                handle = icon.handle,
+            });
+        end
+    end
+
+    return items;
+end
+
 local function party_member_unit(party, index, self_zone)
     local active = truthy(safe_read(function () return party:GetMemberIsActive(index); end, false));
     local name = clean_string(safe_read(function () return party:GetMemberName(index); end, ''));
@@ -312,6 +513,7 @@ local function party_member_unit(party, index, self_zone)
             safe_read(function () return party:GetMemberMainJobLevel(index); end, nil),
             safe_read(function () return party:GetMemberSubJob(index); end, nil),
             safe_read(function () return party:GetMemberSubJobLevel(index); end, nil)),
+        buffs = party_member_buffs(party, index, server_id, same_zone),
         same_zone = same_zone,
         dim = state.settings.same_zone_dim and not same_zone,
     };
@@ -474,6 +676,40 @@ local function unit_right_label(unit)
     return table.concat(pieces, ' ');
 end
 
+local function draw_buff_icon_row(unit, x, y, width)
+    if (not state.settings.show_buffs or unit.kind ~= 'party') then
+        return;
+    end
+
+    local items = buff_icon_items(unit.buffs);
+    if (#items == 0) then
+        return;
+    end
+
+    local tint = unit.dim and { 0.62, 0.62, 0.62, 0.62 } or { 1.00, 1.00, 1.00, 1.00 };
+    local icon_x = x + 8;
+    local icon_y = y + 21;
+    local max_x = x + width - 8;
+
+    for _, item in ipairs(items) do
+        if ((icon_x + BUFF_ICON_SIZE) > max_x) then
+            break;
+        end
+
+        imgui.SetCursorScreenPos({ icon_x, icon_y });
+        imgui.Image(item.handle, { BUFF_ICON_SIZE, BUFF_ICON_SIZE }, { 0, 0 }, { 1, 1 }, tint, { 0, 0, 0, 0 });
+        if (imgui.IsItemHovered()) then
+            imgui.BeginTooltip();
+            imgui.Text(item.name);
+            imgui.EndTooltip();
+        end
+
+        icon_x = icon_x + BUFF_ICON_SIZE + BUFF_ICON_GAP;
+    end
+
+    imgui.SetCursorScreenPos({ x, y });
+end
+
 local function draw_unit_row(unit, width, row_height)
     local x, y = imgui.GetCursorScreenPos();
     local draw_list = imgui.GetWindowDrawList();
@@ -502,6 +738,8 @@ local function draw_unit_row(unit, width, row_height)
     if (#right > 0) then
         draw_text(draw_list, x + width - right_width - 8, y + 5, COLORS.text_muted, right);
     end
+
+    draw_buff_icon_row(unit, x, y, width);
 
     draw_bar(draw_list, bar_x, hp_y, bar_w, 6, unit.hp_pct, hp_color, alpha);
 
@@ -651,17 +889,27 @@ local function render_config_window()
             state.settings.same_zone_dim = not same_zone_dim;
         end
 
+        local show_buffs = state.settings.show_buffs == true;
+        if (imgui.Checkbox('Party Buffs##ashitaframes_show_buffs', { show_buffs })) then
+            state.settings.show_buffs = not show_buffs;
+            state.settings = normalize_settings(state.settings);
+        end
+
         imgui.Separator();
         imgui.TextColored(COLORS.accent, 'Layout');
         render_int_control('Frame Width', 'frame_width', state.settings.frame_width, LIMITS.width_min, LIMITS.width_max, function (value)
             state.settings.frame_width = clamp_int(value, LIMITS.width_min, LIMITS.width_max);
         end);
-        render_int_control('Row Height', 'row_height', state.settings.row_height, LIMITS.row_height_min, LIMITS.row_height_max, function (value)
-            state.settings.row_height = clamp_int(value, LIMITS.row_height_min, LIMITS.row_height_max);
+        local row_height_min = state.settings.show_buffs and LIMITS.row_height_with_buffs_min or LIMITS.row_height_min;
+        render_int_control('Row Height', 'row_height', state.settings.row_height, row_height_min, LIMITS.row_height_max, function (value)
+            state.settings.row_height = clamp_int(value, row_height_min, LIMITS.row_height_max);
         end);
         render_int_control('Row Gap', 'row_gap', state.settings.row_gap, LIMITS.row_gap_min, LIMITS.row_gap_max, function (value)
             state.settings.row_gap = clamp_int(value, LIMITS.row_gap_min, LIMITS.row_gap_max);
         end);
+        render_int_control('Max Buffs', 'max_buffs', state.settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max, function (value)
+            state.settings.max_buffs = clamp_int(value, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
+        end, 'buffs');
         render_int_control('Opacity', 'opacity', state.settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max, function (value)
             state.settings.opacity = clamp_int(value, LIMITS.opacity_min, LIMITS.opacity_max);
         end, '%');
@@ -689,12 +937,14 @@ local function print_help()
 end
 
 local function print_status()
-    log_info(('visible=%s locked=%s target=%s party=%s alliance=%s width=%d rowHeight=%d opacity=%d party=(%d,%d) target=(%d,%d)'):fmt(
+    log_info(('visible=%s locked=%s target=%s party=%s alliance=%s buffs=%s maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) target=(%d,%d)'):fmt(
         tostring(state.visible[1] == true),
         tostring(state.settings.locked == true),
         tostring(state.settings.show_target == true),
         tostring(state.settings.show_party == true),
         tostring(state.settings.show_alliance == true),
+        tostring(state.settings.show_buffs == true),
+        state.settings.max_buffs,
         state.settings.frame_width,
         state.settings.row_height,
         state.settings.opacity,

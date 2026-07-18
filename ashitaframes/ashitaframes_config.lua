@@ -12,6 +12,8 @@ return {
         show_jobs = true,
         show_percent = true,
         show_tp = true,
+        show_buffs = true,
+        max_buffs = 8,
 
         party_window_x = 36,
         party_window_y = 362,
@@ -19,7 +21,7 @@ return {
         target_window_y = 296,
 
         frame_width = 232,
-        row_height = 42,
+        row_height = 56,
         row_gap = 5,
         opacity = 88,
     },
