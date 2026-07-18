@@ -41,7 +41,15 @@ From this repository:
 .\install.ps1
 ```
 
-In game:
+The installer copies the addon and adds `/addon load ashitaframes` to
+`Ashita\scripts\default.txt` if it is not already present. To install without
+changing the startup script:
+
+```powershell
+.\install.ps1 -SkipAutoload
+```
+
+To load immediately in game:
 
 ```text
 /addon load ashitaframes
