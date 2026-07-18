@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.1.0';
+addon.version   = '0.1.1';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -527,7 +527,7 @@ local function render_window(title, open_state, x, y, width, units, position_cal
         return;
     end
 
-    local locked = settings.locked and not state.config_visible[1];
+    local locked = settings.locked == true;
     local window_flags = locked and WINDOW_FLAGS_LOCKED or WINDOW_FLAGS_BASE;
     local pad = locked and 4 or 8;
     local alpha = settings.opacity / 100;
