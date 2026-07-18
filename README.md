@@ -15,8 +15,10 @@ clean while important unit information remains visible elsewhere on screen.
   alliance slots.
 - Shows HP, MP, TP, job/subjob, level, and same-zone dimming where Ashita
   exposes that data.
+- Shows compact party status icons for mapped buffs when Ashita exposes them
+  for the first party. Protect and Shell are mapped first.
 - Includes an in-game configuration window for visibility, locking, sizing,
-  opacity, and alliance display.
+  opacity, party buff display, and alliance display.
 - Provides local UI commands only. It does not target, cast, click-cast, send
   gameplay commands, inject packets, write memory, or automate actions.
 
@@ -41,7 +43,15 @@ From this repository:
 .\install.ps1
 ```
 
-In game:
+The installer copies the addon and adds `/addon load ashitaframes` to
+`Ashita\scripts\default.txt` if it is not already present. To install without
+changing the startup script:
+
+```powershell
+.\install.ps1 -SkipAutoload
+```
+
+To load immediately in game:
 
 ```text
 /addon load ashitaframes
@@ -99,12 +109,14 @@ return {
         show_jobs = true,
         show_percent = true,
         show_tp = true,
+        show_buffs = true,
+        max_buffs = 8,
         party_window_x = 36,
         party_window_y = 362,
         target_window_x = 36,
         target_window_y = 296,
         frame_width = 232,
-        row_height = 42,
+        row_height = 56,
         row_gap = 5,
         opacity = 88,
     },
