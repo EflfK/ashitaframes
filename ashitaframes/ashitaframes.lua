@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.13';
+addon.version   = '0.3.14';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -173,6 +173,7 @@ local TARGET_DEBUFF_REMINDER_PROFILE_DEFAULT = {
     enabled = true,
     debuffs = { 'dia', 'paralyze', 'slow' },
 };
+local TARGET_DEBUFF_MONSTER_SPAWN_FLAG = 0x10;
 local BUFF_REMINDER_PROFILE_DEFAULT = {
     enabled = true,
     self = true,
@@ -305,6 +306,10 @@ local function clean_string(value)
     end
 
     return tostring(value):gsub('%z', ''):gsub('^%s+', ''):gsub('%s+$', '');
+end
+
+local function compact_name(value)
+    return clean_string(value):lower():gsub('%s+', ' ');
 end
 
 local function safe_read(reader, default)
@@ -1464,8 +1469,39 @@ local function reminder_buff_keys(unit)
     return result;
 end
 
+local function target_debuff_suppressed_name(name)
+    local value = compact_name(name);
+    if (#value == 0) then
+        return false;
+    end
+
+    if (value == 'armoury crate' or value == 'armory crate' or value == 'sturdy pyxis') then
+        return true;
+    end
+
+    return value:find('treasure', 1, true) ~= nil
+        and (value:find('chest', 1, true) ~= nil or value:find('coffer', 1, true) ~= nil or value:find('casket', 1, true) ~= nil);
+end
+
+local function target_debuff_has_monster_spawn_flag(spawn_flags)
+    spawn_flags = tonumber(spawn_flags);
+    return spawn_flags ~= nil and bit.band(spawn_flags, TARGET_DEBUFF_MONSTER_SPAWN_FLAG) == TARGET_DEBUFF_MONSTER_SPAWN_FLAG;
+end
+
+local function target_debuff_target_eligible(unit)
+    if (unit == nil or unit.kind ~= 'target' or unit.target_type ~= 2 or target_debuff_suppressed_name(unit.name)) then
+        return false;
+    end
+
+    if (unit.spawn_flags ~= nil and not target_debuff_has_monster_spawn_flag(unit.spawn_flags)) then
+        return false;
+    end
+
+    return true;
+end
+
 local function target_debuff_reminder_keys(unit)
-    if (not state.settings.show_target_debuff_reminders or unit.kind ~= 'target' or unit.target_type ~= 2 or tonumber(unit.server_id) == nil or tonumber(unit.server_id) == 0) then
+    if (not state.settings.show_target_debuff_reminders or not target_debuff_target_eligible(unit) or tonumber(unit.server_id) == nil or tonumber(unit.server_id) == 0) then
         return { };
     end
 
@@ -2094,6 +2130,7 @@ local function collect_target_unit()
         server_id = safe_read(function () return target:GetServerId(0); end, nil);
     end
     local target_type = safe_read(function () return entity:GetType(active_index); end, nil);
+    local spawn_flags = safe_read(function () return entity:GetSpawnFlags(active_index); end, nil);
 
     return {
         kind = 'target',
@@ -2101,6 +2138,7 @@ local function collect_target_unit()
         index = active_index,
         server_id = server_id,
         target_type = target_type,
+        spawn_flags = spawn_flags,
         name = #name > 0 and name or ('Target %d'):fmt(active_index),
         hp_pct = hp_pct,
         mp_pct = nil,
@@ -2252,7 +2290,7 @@ local function draw_buff_icon_row(unit, x, y, width, alpha)
 end
 
 local function draw_target_debuff_icon_row(unit, x, y, width, alpha)
-    if (not state.settings.show_target_debuffs or unit.kind ~= 'target') then
+    if (not state.settings.show_target_debuffs or not target_debuff_target_eligible(unit)) then
         return;
     end
 
@@ -2343,7 +2381,7 @@ local function effective_row_height(unit)
     if (unit.kind == 'party' and state.settings.show_buffs) then
         return math.max(state.settings.row_height, LIMITS.party_row_height_with_buffs_min);
     end
-    if (unit.kind == 'target' and state.settings.show_target_debuffs and unit.target_type == 2) then
+    if (unit.kind == 'target' and state.settings.show_target_debuffs and target_debuff_target_eligible(unit)) then
         return math.max(state.settings.row_height, LIMITS.target_row_height_with_debuffs_min);
     end
 
