@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.8';
+addon.version   = '0.3.9';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -187,6 +187,7 @@ local state = {
     buff_icon_cache = { },
     observed_buffs = { },
     observed_buff_zone_id = nil,
+    observed_text_events = 0,
     party_window_x = 36,
     party_window_y = 362,
     target_window_x = 36,
@@ -2101,7 +2102,7 @@ local function print_status()
     local reminder_job = current_player_job_key();
     local reminder_profile = reminder_profile_for_job(reminder_job);
 
-    log_info(('visible=%s locked=%s target=%s party=%s alliance=%s buffs=%s reminders=%s reminderJob=%s reminderProfile=%s observed=%s maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) target=(%d,%d)'):fmt(
+    log_info(('visible=%s locked=%s target=%s party=%s alliance=%s buffs=%s reminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) target=(%d,%d)'):fmt(
         tostring(state.visible[1] == true),
         tostring(state.settings.locked == true),
         tostring(state.settings.show_target == true),
@@ -2112,6 +2113,7 @@ local function print_status()
         reminder_job,
         reminder_profile.enabled and 'on' or 'off',
         observed_buff_summary(),
+        state.observed_text_events,
         state.settings.max_buffs,
         state.settings.frame_width,
         state.settings.row_height,
@@ -2179,28 +2181,29 @@ local function set_observed_buff(name, key, enabled)
     local name_key = observed_name_key(name);
     key = normalize_buff_key(key);
     if (name_key == nil or key == nil or buff_id_for_key(key) == nil or not current_party_contains_name(name)) then
-        return;
+        return false;
     end
 
     if (enabled == true) then
         state.observed_buffs[name_key] = state.observed_buffs[name_key] or { };
         state.observed_buffs[name_key][key] = true;
-        return;
+        return true;
     end
 
     local entry = state.observed_buffs[name_key];
     if (type(entry) ~= 'table') then
-        return;
+        return false;
     end
 
     entry[key] = nil;
     for _, value in pairs(entry) do
         if (value == true) then
-            return;
+            return true;
         end
     end
 
     state.observed_buffs[name_key] = nil;
+    return true;
 end
 
 local function observed_buff_event(text)
@@ -2226,10 +2229,10 @@ local function process_observed_buff_text(message)
     local name, buff, enabled = observed_buff_event(clean_event_message(message));
     local key = buff_key_from_name(buff);
     if (name == nil or key == nil) then
-        return;
+        return false;
     end
 
-    set_observed_buff(name, key, enabled);
+    return set_observed_buff(name, key, enabled);
 end
 
 local function seed_observed_buffs_from_chat_log()
@@ -2274,12 +2277,23 @@ local function seed_observed_buffs_from_chat_log()
 end
 
 local function handle_text_in(e)
-    local message = e.message;
-    if (message == nil or message == '') then
-        message = e.modified_message;
-    end
+    local candidates = {
+        e.message,
+        e.message_modified,
+        e.modified_message,
+    };
 
-    process_observed_buff_text(message);
+    local seen = { };
+    for _, message in ipairs(candidates) do
+        local text = tostring(message or '');
+        if (#text > 0 and seen[text] ~= true) then
+            seen[text] = true;
+            if (process_observed_buff_text(text)) then
+                state.observed_text_events = state.observed_text_events + 1;
+                return;
+            end
+        end
+    end
 end
 
 local function handle_command(e)

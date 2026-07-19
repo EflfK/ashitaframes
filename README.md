@@ -22,10 +22,10 @@ clean while important unit information remains visible elsewhere on screen.
 - Shows large missing-buff reminders for mapped buffs configured per current
   player job. Missing reminders flash with a crossed icon; active buffs show
   as normal icons. Trust reminders clear after observed gain messages and reset
-  on zoning or party changes, even if another chat addon hides the native
-  incoming line. On load, recent current-zone effect messages seed the observed
-  state so reloads can keep already-applied trust buffs visible. Protect and
-  Shell are mapped first.
+  on zoning or party changes, even if another chat addon modifies or hides the
+  native incoming line. On load, recent current-zone effect messages seed the
+  observed state so reloads can keep already-applied trust buffs visible.
+  Protect and Shell are mapped first.
 - Includes a persistent in-game configuration window for visibility, locking,
   sizing, opacity, party buff display, missing-buff reminders, and alliance
   display.
