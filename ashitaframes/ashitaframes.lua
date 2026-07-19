@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.14';
+addon.version   = '0.3.15';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -163,6 +163,18 @@ local TARGET_DEBUFF_SPELL_IDS = {
     [80] = 'paralyze',
     [56] = 'slow',
     [79] = 'slow',
+};
+local TARGET_DEBUFF_SPELL_DURATIONS = {
+    [23] = 60,
+    [24] = 120,
+    [25] = 180,
+    [26] = 180,
+    [27] = 180,
+    [33] = 60,
+    [56] = 180,
+    [58] = 120,
+    [79] = 180,
+    [80] = 120,
 };
 local TARGET_DEBUFF_STATUS_IDS = {
     [4] = 'paralyze',
@@ -2854,37 +2866,11 @@ end
 
 local TARGET_DEBUFF_APPLY_MESSAGES = {
     [2] = true,
-    [160] = true,
-    [164] = true,
-    [166] = true,
-    [186] = true,
-    [194] = true,
-    [203] = true,
-    [205] = true,
-    [230] = true,
     [236] = true,
     [237] = true,
     [252] = true,
-    [264] = true,
-    [265] = true,
-    [266] = true,
-    [267] = true,
     [268] = true,
-    [269] = true,
     [271] = true,
-    [272] = true,
-    [277] = true,
-    [278] = true,
-    [279] = true,
-    [280] = true,
-    [319] = true,
-    [320] = true,
-    [375] = true,
-    [412] = true,
-    [645] = true,
-    [754] = true,
-    [755] = true,
-    [804] = true,
 };
 local TARGET_DEBUFF_OFF_MESSAGES = {
     [64] = true,
@@ -2921,8 +2907,13 @@ local function local_player_server_id()
     return party ~= nil and tonumber(safe_read(function () return party:GetMemberServerId(0); end, nil)) or nil;
 end
 
-local function target_debuff_duration_seconds(key)
+local function target_debuff_duration_seconds(key, spell_id)
     key = normalize_target_debuff_key(key);
+    spell_id = tonumber(spell_id);
+    if (spell_id ~= nil and TARGET_DEBUFF_SPELL_DURATIONS[spell_id] ~= nil) then
+        return clamp_int(TARGET_DEBUFF_SPELL_DURATIONS[spell_id], 1, 86400);
+    end
+
     local definition = key ~= nil and TARGET_DEBUFF_DEFINITIONS[key] or nil;
     return clamp_int(definition ~= nil and definition.duration_seconds or 120, 1, 86400);
 end
@@ -2939,7 +2930,7 @@ local function set_observed_target_debuff(server_id, key, enabled, spell_id)
         state.observed_target_debuffs[target_id][key] = {
             status_id = target_debuff_id_for_key(key),
             spell_id = tonumber(spell_id),
-            expires_at = os.time() + target_debuff_duration_seconds(key),
+            expires_at = os.time() + target_debuff_duration_seconds(key, spell_id),
         };
         return true;
     end
@@ -2970,7 +2961,7 @@ local function read_le_uint(data, offset, size)
     local result = 0;
     local multiplier = 1;
     for index = 0, size - 1, 1 do
-        local value = data:byte(offset + index + 1);
+        local value = data:byte(offset + index);
         if (value == nil) then
             return nil;
         end
