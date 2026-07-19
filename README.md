@@ -16,11 +16,13 @@ clean while important unit information remains visible elsewhere on screen.
   hidden once they are no longer in your current zone.
 - Shows HP, MP, TP, job/subjob, level, and same-zone dimming where Ashita
   exposes that data.
-- Shows compact party status icons for mapped buffs when Ashita exposes them
-  for the first party. Protect and Shell are mapped first.
+- Shows compact party status icons for mapped buffs from Ashita status memory
+  when available, plus observed party effect messages for trusts. Protect and
+  Shell are mapped first.
 - Shows large missing-buff reminders for mapped buffs configured per current
   player job. Missing reminders flash with a crossed icon; active buffs show
-  as normal icons. Protect and Shell are mapped first.
+  as normal icons. Trust reminders clear after observed gain messages and reset
+  on zoning or party changes. Protect and Shell are mapped first.
 - Includes a persistent in-game configuration window for visibility, locking,
   sizing, opacity, party buff display, missing-buff reminders, and alliance
   display.

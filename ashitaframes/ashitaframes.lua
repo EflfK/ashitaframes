@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.5';
+addon.version   = '0.3.6';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -118,8 +118,8 @@ local BUFF_ICON_FILES = {
     shell = 'shell_1.png',
 };
 local BUFF_DEFINITIONS = {
-    protect = { label = 'Protect', spell = 'Protect', file = BUFF_ICON_FILES.protect },
-    shell = { label = 'Shell', spell = 'Shell', file = BUFF_ICON_FILES.shell },
+    protect = { id = 40, label = 'Protect', spell = 'Protect', file = BUFF_ICON_FILES.protect },
+    shell = { id = 41, label = 'Shell', spell = 'Shell', file = BUFF_ICON_FILES.shell },
 };
 local BUFF_REMINDER_PROFILE_DEFAULT = {
     enabled = true,
@@ -185,6 +185,8 @@ local state = {
     config_job_key = nil,
     buff_name_cache = { },
     buff_icon_cache = { },
+    observed_buffs = { },
+    observed_buff_zone_id = nil,
     party_window_x = 36,
     party_window_y = 362,
     target_window_x = 36,
@@ -677,16 +679,104 @@ local function party_status_buffs(party_index, server_id)
     return { };
 end
 
-local function party_member_buffs(party, index, server_id, same_zone)
+local function observed_name_key(name)
+    name = clean_string(name):lower():gsub('%s+', ' ');
+    if (#name == 0) then
+        return nil;
+    end
+
+    return name;
+end
+
+local function buff_id_for_key(key)
+    key = normalize_buff_key(key);
+    local definition = key ~= nil and BUFF_DEFINITIONS[key] or nil;
+    return definition ~= nil and tonumber(definition.id) or nil;
+end
+
+local function observed_buffs_for_name(name)
+    local name_key = observed_name_key(name);
+    local entry = name_key ~= nil and state.observed_buffs[name_key] or nil;
+    local result = { };
+    local seen = { };
+
+    if (type(entry) ~= 'table') then
+        return result;
+    end
+
+    for key, enabled in pairs(entry) do
+        if (enabled == true) then
+            append_buff_id(result, seen, buff_id_for_key(key));
+        end
+    end
+
+    return result;
+end
+
+local function merge_buff_lists(primary, secondary)
+    local result = { };
+    local seen = { };
+
+    for _, value in ipairs(primary or { }) do
+        append_buff_id(result, seen, value);
+    end
+
+    for _, value in ipairs(secondary or { }) do
+        append_buff_id(result, seen, value);
+    end
+
+    return result;
+end
+
+local function clear_observed_buffs()
+    state.observed_buffs = { };
+end
+
+local function sync_observed_buffs_for_party(party, self_zone)
+    local zone_id = tonumber(self_zone);
+    if (zone_id ~= nil) then
+        zone_id = math.floor(zone_id + 0.5);
+        if (state.observed_buff_zone_id ~= nil and state.observed_buff_zone_id ~= zone_id) then
+            clear_observed_buffs();
+        end
+        state.observed_buff_zone_id = zone_id;
+    end
+
+    if (party == nil) then
+        return;
+    end
+
+    local active_names = { };
+    for index = 0, 5, 1 do
+        local active = truthy(safe_read(function () return party:GetMemberIsActive(index); end, false));
+        local name = clean_string(safe_read(function () return party:GetMemberName(index); end, ''));
+        local member_zone = safe_read(function () return party:GetMemberZone(index); end, nil);
+        local same_zone = self_zone == nil or member_zone == nil or member_zone == self_zone;
+        local key = observed_name_key(name);
+
+        if (active and same_zone and key ~= nil) then
+            active_names[key] = true;
+        end
+    end
+
+    for key, _ in pairs(state.observed_buffs) do
+        if (active_names[key] ~= true) then
+            state.observed_buffs[key] = nil;
+        end
+    end
+end
+
+local function party_member_buffs(party, index, server_id, same_zone, name)
     if (not state.settings.show_buffs or index > 5 or same_zone == false) then
         return { };
     end
 
+    local observed = observed_buffs_for_name(name);
     if (index == 0) then
-        return player_buffs();
+        return merge_buff_lists(player_buffs(), observed);
     end
 
-    return party_status_buffs(index, server_id);
+    return merge_buff_lists(party_status_buffs(index, server_id), observed);
 end
 
 local function buff_name(buff_id)
@@ -1373,7 +1463,7 @@ local function party_member_unit(party, index, self_zone, reminder_job, reminder
             safe_read(function () return party:GetMemberMainJobLevel(index); end, nil),
             safe_read(function () return party:GetMemberSubJob(index); end, nil),
             safe_read(function () return party:GetMemberSubJobLevel(index); end, nil)),
-        buffs = party_member_buffs(party, index, server_id, same_zone),
+        buffs = party_member_buffs(party, index, server_id, same_zone, name),
         same_zone = same_zone,
         dim = state.settings.same_zone_dim and not same_zone,
     };
@@ -1395,6 +1485,8 @@ local function collect_party_units()
     local reminders_suppressed = buff_reminders_suppressed_for_zone(self_zone);
     local max_index = state.settings.show_alliance and 17 or 5;
     local units = { };
+
+    sync_observed_buffs_for_party(party, self_zone);
 
     for index = 0, max_index, 1 do
         local unit = party_member_unit(party, index, self_zone, reminder_job, reminders_suppressed);
@@ -2006,6 +2098,108 @@ local function print_status()
     end
 end
 
+local function clean_event_message(message)
+    local text = tostring(message or ''):gsub('\r', ' '):gsub('\n', ' '):gsub('%z', '');
+    text = text:gsub('.', function (character)
+        local value = character:byte();
+        if (value ~= nil and value < 32 and value ~= 9) then
+            return '';
+        end
+
+        return character;
+    end);
+
+    return clean_string(text);
+end
+
+local function current_party_contains_name(name)
+    local target_key = observed_name_key(name);
+    if (target_key == nil) then
+        return false;
+    end
+
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    local party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
+    if (party == nil) then
+        return false;
+    end
+
+    local self_zone = safe_read(function () return party:GetMemberZone(0); end, nil);
+    for index = 0, 5, 1 do
+        local active = truthy(safe_read(function () return party:GetMemberIsActive(index); end, false));
+        local member_name = clean_string(safe_read(function () return party:GetMemberName(index); end, ''));
+        local member_zone = safe_read(function () return party:GetMemberZone(index); end, nil);
+        local same_zone = self_zone == nil or member_zone == nil or member_zone == self_zone;
+
+        if (active and same_zone and observed_name_key(member_name) == target_key) then
+            return true;
+        end
+    end
+
+    return false;
+end
+
+local function set_observed_buff(name, key, enabled)
+    local name_key = observed_name_key(name);
+    key = normalize_buff_key(key);
+    if (name_key == nil or key == nil or buff_id_for_key(key) == nil or not current_party_contains_name(name)) then
+        return;
+    end
+
+    if (enabled == true) then
+        state.observed_buffs[name_key] = state.observed_buffs[name_key] or { };
+        state.observed_buffs[name_key][key] = true;
+        return;
+    end
+
+    local entry = state.observed_buffs[name_key];
+    if (type(entry) ~= 'table') then
+        return;
+    end
+
+    entry[key] = nil;
+    for _, value in pairs(entry) do
+        if (value == true) then
+            return;
+        end
+    end
+
+    state.observed_buffs[name_key] = nil;
+end
+
+local function observed_buff_event(text)
+    local name, buff = text:match('^(.-) gains the effect of (.-)%.?$');
+    if (name ~= nil and buff ~= nil) then
+        return name, buff, true;
+    end
+
+    name, buff = text:match('^(.-) loses the effect of (.-)%.?$');
+    if (name ~= nil and buff ~= nil) then
+        return name, buff, false;
+    end
+
+    name, buff = text:match("^(.-)'s (.-) effect wears off%.?$");
+    if (name ~= nil and buff ~= nil) then
+        return name, buff, false;
+    end
+
+    return nil, nil, nil;
+end
+
+local function handle_text_in(e)
+    if (e.blocked) then
+        return;
+    end
+
+    local name, buff, enabled = observed_buff_event(clean_event_message(e.message));
+    local key = buff_key_from_name(buff);
+    if (name == nil or key == nil) then
+        return;
+    end
+
+    set_observed_buff(name, key, enabled);
+end
+
 local function handle_command(e)
     local args = e.command:args();
     local name = clean_string(args[1]):lower();
@@ -2076,6 +2270,10 @@ end);
 
 ashita.events.register('command', 'command_cb', function (e)
     handle_command(e);
+end);
+
+ashita.events.register('text_in', 'text_in_cb', function (e)
+    handle_text_in(e);
 end);
 
 ashita.events.register('d3d_present', 'present_cb', function ()
