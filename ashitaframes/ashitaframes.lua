@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.28';
+addon.version   = '0.3.29';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -3119,6 +3119,14 @@ local function draw_text(draw_list, x, y, color, text)
     draw_list:AddText({ x, y }, color_u32(color), text);
 end
 
+local function window_bg_color(locked, alpha)
+    if (locked == true) then
+        return { COLORS.panel_bg[1], COLORS.panel_bg[2], COLORS.panel_bg[3], 0.0 };
+    end
+
+    return apply_alpha(COLORS.panel_bg, alpha);
+end
+
 function draw_bar_fill(draw_list, x, y, width, height, percent, fill_color, alpha, rounding)
     percent = percent_value(percent);
     local fill_width = 0;
@@ -3509,7 +3517,7 @@ local function render_window(title, open_state, x, y, layout, units, position_ca
     imgui.SetNextWindowPos({ x, y }, locked and ImGuiCond_Always or ImGuiCond_FirstUseEver);
     imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { pad, pad });
     imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, locked and 0.0 or 1.0);
-    imgui.PushStyleColor(ImGuiCol_WindowBg, apply_alpha(COLORS.panel_bg, alpha));
+    imgui.PushStyleColor(ImGuiCol_WindowBg, window_bg_color(locked, alpha));
     imgui.PushStyleColor(ImGuiCol_Border, apply_alpha(COLORS.panel_border, alpha));
 
     if (imgui.Begin(title, open_state, window_flags)) then
@@ -3561,7 +3569,7 @@ local function render_party_grid_window(title, open_state, x, y, layout, units, 
     imgui.SetNextWindowPos({ x, y }, locked and ImGuiCond_Always or ImGuiCond_FirstUseEver);
     imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { pad, pad });
     imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, locked and 0.0 or 1.0);
-    imgui.PushStyleColor(ImGuiCol_WindowBg, apply_alpha(COLORS.panel_bg, alpha));
+    imgui.PushStyleColor(ImGuiCol_WindowBg, window_bg_color(locked, alpha));
     imgui.PushStyleColor(ImGuiCol_Border, apply_alpha(COLORS.panel_border, alpha));
 
     if (imgui.Begin(title, open_state, window_flags)) then

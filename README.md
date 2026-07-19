@@ -134,7 +134,9 @@ for the selected size. Reminder options are filtered to spells
 your current main/sub job can actually cast and that your character has learned. Missing
 target-debuff reminders are also hidden while the spell is on cooldown. Missing
 party-buff reminder flashes are hidden in towns by default; the config window
-can also suppress or allow the current non-town zone.
+can also suppress or allow the current non-town zone. Locked frames hide their
+title bars and window-shell backgrounds so only the individual frame rows are
+drawn; the configuration window keeps its normal container.
 
 Manual config is still supported:
 
