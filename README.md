@@ -122,7 +122,7 @@ Use Save to write the current window layout and reminder settings to
 `ashitaframes_config.lua`. Self, Party, Pet, and Target frame width, height,
 row gap, opacity, MP bar, TP bar, and MP/TP text thresholds are configured
 independently. HP text shows percent plus current/max when that data is
-available. Party frame layout
+available. Width controls allow frames up to 750 pixels wide. Party frame layout
 is also configured separately for total party sizes 1 through 6, including
 columns and rows for stacking party members into grids; while the configuration
 window is open, the party frame fills missing non-self rows with preview members

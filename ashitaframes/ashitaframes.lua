@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.25';
+addon.version   = '0.3.26';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -275,7 +275,7 @@ local TOWN_ZONE_IDS = {
 
 local LIMITS = {
     width_min = 170,
-    width_max = 360,
+    width_max = 750,
     row_height_min = 32,
     target_row_height_with_debuffs_min = 92,
     party_row_height_with_buffs_min = 92,
