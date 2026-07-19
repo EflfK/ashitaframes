@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.18';
+addon.version   = '0.3.19';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -50,6 +50,7 @@ local DEFAULT_SETTINGS = {
     locked = false,
     show_target = true,
     show_party = true,
+    show_pet = true,
     show_alliance = false,
     show_empty_target = true,
     same_zone_dim = true,
@@ -65,6 +66,8 @@ local DEFAULT_SETTINGS = {
     max_buffs = 8,
     party_window_x = 36,
     party_window_y = 362,
+    pet_window_x = 36,
+    pet_window_y = 230,
     target_window_x = 36,
     target_window_y = 296,
     frame_width = 232,
@@ -266,6 +269,8 @@ local state = {
     observed_log_events = 0,
     party_window_x = 36,
     party_window_y = 362,
+    pet_window_x = 36,
+    pet_window_y = 230,
     target_window_x = 36,
     target_window_y = 296,
 };
@@ -625,6 +630,7 @@ local function normalize_settings(settings)
     settings.locked = settings.locked == true;
     settings.show_target = settings.show_target ~= false;
     settings.show_party = settings.show_party ~= false;
+    settings.show_pet = settings.show_pet ~= false;
     settings.show_alliance = settings.show_alliance == true;
     settings.show_empty_target = settings.show_empty_target ~= false;
     settings.same_zone_dim = settings.same_zone_dim ~= false;
@@ -639,6 +645,8 @@ local function normalize_settings(settings)
 
     settings.party_window_x = clamp_int(settings.party_window_x, -2000, 4000);
     settings.party_window_y = clamp_int(settings.party_window_y, -2000, 4000);
+    settings.pet_window_x = clamp_int(settings.pet_window_x, -2000, 4000);
+    settings.pet_window_y = clamp_int(settings.pet_window_y, -2000, 4000);
     settings.target_window_x = clamp_int(settings.target_window_x, -2000, 4000);
     settings.target_window_y = clamp_int(settings.target_window_y, -2000, 4000);
     settings.frame_width = clamp_int(settings.frame_width, LIMITS.width_min, LIMITS.width_max);
@@ -675,6 +683,8 @@ local function load_config()
     state.visible[1] = state.settings.visible;
     state.party_window_x = state.settings.party_window_x;
     state.party_window_y = state.settings.party_window_y;
+    state.pet_window_x = state.settings.pet_window_x;
+    state.pet_window_y = state.settings.pet_window_y;
     state.target_window_x = state.settings.target_window_x;
     state.target_window_y = state.settings.target_window_y;
 end
@@ -1996,6 +2006,8 @@ local function capture_runtime_settings_for_save()
     state.settings.visible = state.visible[1] == true;
     state.settings.party_window_x = state.party_window_x;
     state.settings.party_window_y = state.party_window_y;
+    state.settings.pet_window_x = state.pet_window_x;
+    state.settings.pet_window_y = state.pet_window_y;
     state.settings.target_window_x = state.target_window_x;
     state.settings.target_window_y = state.target_window_y;
     state.settings.buff_reminders = normalize_buff_reminders(state.settings.buff_reminders);
@@ -2016,6 +2028,7 @@ local function config_text_from_settings(settings)
         '',
         ('        show_target = %s,'):fmt(bool_text(settings.show_target)),
         ('        show_party = %s,'):fmt(bool_text(settings.show_party)),
+        ('        show_pet = %s,'):fmt(bool_text(settings.show_pet)),
         ('        show_alliance = %s,'):fmt(bool_text(settings.show_alliance)),
         ('        show_empty_target = %s,'):fmt(bool_text(settings.show_empty_target)),
         '',
@@ -2033,6 +2046,8 @@ local function config_text_from_settings(settings)
         '',
         ('        party_window_x = %d,'):fmt(state.party_window_x),
         ('        party_window_y = %d,'):fmt(state.party_window_y),
+        ('        pet_window_x = %d,'):fmt(state.pet_window_x),
+        ('        pet_window_y = %d,'):fmt(state.pet_window_y),
         ('        target_window_x = %d,'):fmt(state.target_window_x),
         ('        target_window_y = %d,'):fmt(state.target_window_y),
         '',
@@ -2223,6 +2238,53 @@ local function collect_target_unit()
     };
 end
 
+function collect_pet_unit()
+    local player_entity = safe_read(function () return GetPlayerEntity(); end, nil);
+    if (player_entity == nil) then
+        return nil;
+    end
+
+    local pet_index = tonumber(safe_read(function () return player_entity.PetTargetIndex; end, 0)) or 0;
+    if (pet_index <= 0) then
+        return nil;
+    end
+
+    local pet = safe_read(function () return GetEntity(pet_index); end, nil);
+    if (pet == nil) then
+        return nil;
+    end
+
+    local name = clean_string(safe_read(function () return pet.Name; end, ''));
+    if (#name == 0) then
+        return nil;
+    end
+
+    local distance = nil;
+    local raw_distance = tonumber(safe_read(function () return pet.Distance; end, nil));
+    if (raw_distance ~= nil and raw_distance >= 0) then
+        distance = math.sqrt(raw_distance);
+    end
+
+    local player = safe_read(function () return AshitaCore:GetMemoryManager():GetPlayer(); end, nil);
+
+    return {
+        kind = 'pet',
+        tag = 'PET',
+        index = pet_index,
+        server_id = safe_read(function () return pet.ServerId; end, nil),
+        name = name,
+        hp_pct = safe_read(function () return pet.HPPercent; end, nil),
+        mp_pct = player ~= nil and safe_read(function () return player:GetPetMPPercent(); end, nil) or nil,
+        tp = player ~= nil and safe_read(function () return player:GetPetTP(); end, nil) or nil,
+        distance = distance,
+        job = '',
+        buffs = { },
+        debuffs = { },
+        same_zone = true,
+        dim = false,
+    };
+end
+
 local function calc_text_width(text)
     local width = safe_read(function () return imgui.CalcTextSize(text); end, nil);
     if (type(width) == 'number') then
@@ -2282,6 +2344,18 @@ local function unit_right_label(unit)
         end
 
         return '';
+    end
+
+    if (unit.kind == 'pet') then
+        local pieces = { };
+        if (unit.distance ~= nil) then
+            table.insert(pieces, ('%.1f'):fmt(unit.distance));
+        end
+        if (state.settings.show_tp and tonumber(unit.tp) ~= nil) then
+            table.insert(pieces, ('%dTP'):fmt(unit.tp));
+        end
+
+        return table.concat(pieces, ' ');
     end
 
     local pieces = { };
@@ -2432,7 +2506,7 @@ local function draw_unit_row(unit, width, row_height)
 
     draw_bar(draw_list, bar_x, hp_y, bar_w, 6, unit.hp_pct, hp_color, alpha);
 
-    if (unit.kind == 'party') then
+    if (unit.kind == 'party' or unit.kind == 'pet') then
         draw_bar(draw_list, bar_x, mp_y, bar_w, 4, unit.mp_pct, COLORS.mp, alpha);
         if (settings.show_tp) then
             draw_tp_line(draw_list, bar_x, y + row_height - 3, bar_w, unit.tp, alpha);
@@ -2529,6 +2603,29 @@ local function render_party()
         function (x, y)
             state.party_window_x = math.floor(x + 0.5);
             state.party_window_y = math.floor(y + 0.5);
+        end);
+end
+
+function render_pet()
+    if (not state.settings.show_pet) then
+        return;
+    end
+
+    local unit = collect_pet_unit();
+    if (unit == nil) then
+        return;
+    end
+
+    render_window(
+        'AshitaFrames Pet###AshitaFramesPet',
+        state.visible,
+        state.pet_window_x,
+        state.pet_window_y,
+        state.settings.frame_width,
+        { unit },
+        function (x, y)
+            state.pet_window_x = math.floor(x + 0.5);
+            state.pet_window_y = math.floor(y + 0.5);
         end);
 end
 
@@ -2763,6 +2860,12 @@ local function render_config_window()
             mark_config_changed();
         end
 
+        local show_pet = state.settings.show_pet == true;
+        if (imgui.Checkbox('Pet Frame##ashitaframes_show_pet', { show_pet })) then
+            state.settings.show_pet = not show_pet;
+            mark_config_changed();
+        end
+
         local show_alliance = state.settings.show_alliance == true;
         if (imgui.Checkbox('Alliance Slots##ashitaframes_show_alliance', { show_alliance })) then
             state.settings.show_alliance = not show_alliance;
@@ -2828,6 +2931,7 @@ local function render_config_window()
 
         imgui.Separator();
         imgui.Text(('Party pos: %d, %d'):fmt(state.party_window_x, state.party_window_y));
+        imgui.Text(('Pet pos: %d, %d'):fmt(state.pet_window_x, state.pet_window_y));
         imgui.Text(('Target pos: %d, %d'):fmt(state.target_window_x, state.target_window_y));
 
         if (imgui.Button('Save##ashitaframes_config_save')) then
@@ -2894,11 +2998,12 @@ local function print_status()
     local reminder_job = current_player_job_key();
     local reminder_profile = reminder_profile_for_job(reminder_job);
 
-    log_info(('visible=%s locked=%s target=%s party=%s alliance=%s buffs=%s reminders=%s targetDebuffs=%s targetDebuffReminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) target=(%d,%d)'):fmt(
+    log_info(('visible=%s locked=%s target=%s party=%s pet=%s alliance=%s buffs=%s reminders=%s targetDebuffs=%s targetDebuffReminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) pet=(%d,%d) target=(%d,%d)'):fmt(
         tostring(state.visible[1] == true),
         tostring(state.settings.locked == true),
         tostring(state.settings.show_target == true),
         tostring(state.settings.show_party == true),
+        tostring(state.settings.show_pet == true),
         tostring(state.settings.show_alliance == true),
         tostring(state.settings.show_buffs == true),
         tostring(state.settings.show_buff_reminders == true),
@@ -2915,6 +3020,8 @@ local function print_status()
         state.settings.opacity,
         state.party_window_x,
         state.party_window_y,
+        state.pet_window_x,
+        state.pet_window_y,
         state.target_window_x,
         state.target_window_y));
 
@@ -3702,6 +3809,7 @@ ashita.events.register('d3d_present', 'present_cb', function ()
     end
 
     render_target();
+    render_pet();
     render_party();
     render_config_window();
 end);

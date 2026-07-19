@@ -14,6 +14,8 @@ clean while important unit information remains visible elsewhere on screen.
 - Draws draggable party frames for the first party by default, with optional
   alliance slots. Trust slots that linger in Ashita memory after zoning are
   hidden once they are no longer in your current zone.
+- Draws a draggable pet frame when your local player has an active pet, using
+  the pet entity for name/HP/distance and Ashita pet state for MP and TP.
 - Shows HP, MP, TP, job/subjob, level, and same-zone dimming where Ashita
   exposes that data.
 - Shows compact party status icons for mapped buffs from Ashita status memory
@@ -29,10 +31,10 @@ clean while important unit information remains visible elsewhere on screen.
   Protect and Shell are mapped first.
 - Shows target-frame icons for owned mapped debuffs and flashes missing
   target-debuff reminders only when the spell is learned, usable by the current
-  main/sub job, and off cooldown. Dia and Paralyze are mapped first.
+  main/sub job, and off cooldown. Dia, Paralyze, and Slow are mapped first.
 - Includes a persistent in-game configuration window for visibility, locking,
-  sizing, opacity, party buff display, target debuff display, missing-buff
-  reminders, and alliance display.
+  sizing, opacity, party/pet/target display, party buff display, target debuff
+  display, missing-buff reminders, and alliance display.
 - Provides local UI commands only. It does not target, cast, click-cast, send
   gameplay commands, inject packets, write memory, or automate actions.
 
@@ -138,6 +140,7 @@ return {
         locked = false,
         show_target = true,
         show_party = true,
+        show_pet = true,
         show_alliance = false,
         show_empty_target = true,
         same_zone_dim = true,
@@ -153,6 +156,8 @@ return {
         max_buffs = 8,
         party_window_x = 36,
         party_window_y = 362,
+        pet_window_x = 36,
+        pet_window_y = 230,
         target_window_x = 36,
         target_window_y = 296,
         frame_width = 232,

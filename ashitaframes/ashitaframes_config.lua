@@ -5,6 +5,7 @@ return {
 
         show_target = true,
         show_party = true,
+        show_pet = true,
         show_alliance = false,
         show_empty_target = true,
 
@@ -22,6 +23,8 @@ return {
 
         party_window_x = 36,
         party_window_y = 362,
+        pet_window_x = 36,
+        pet_window_y = 230,
         target_window_x = 36,
         target_window_y = 296,
 
