@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.6';
+addon.version   = '0.3.8';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -2070,11 +2070,38 @@ local function print_help()
     print(chat.header(addon.name):append(chat.message('/ashitaframes reload | status')));
 end
 
+local function observed_buff_summary()
+    local names = { };
+
+    for name, buffs in pairs(state.observed_buffs) do
+        local buff_names = { };
+        if (type(buffs) == 'table') then
+            for key, enabled in pairs(buffs) do
+                if (enabled == true) then
+                    table.insert(buff_names, key);
+                end
+            end
+        end
+
+        if (#buff_names > 0) then
+            table.sort(buff_names);
+            table.insert(names, ('%s:%s'):fmt(name, table.concat(buff_names, '+')));
+        end
+    end
+
+    if (#names == 0) then
+        return 'none';
+    end
+
+    table.sort(names);
+    return table.concat(names, ', ');
+end
+
 local function print_status()
     local reminder_job = current_player_job_key();
     local reminder_profile = reminder_profile_for_job(reminder_job);
 
-    log_info(('visible=%s locked=%s target=%s party=%s alliance=%s buffs=%s reminders=%s reminderJob=%s reminderProfile=%s maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) target=(%d,%d)'):fmt(
+    log_info(('visible=%s locked=%s target=%s party=%s alliance=%s buffs=%s reminders=%s reminderJob=%s reminderProfile=%s observed=%s maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) target=(%d,%d)'):fmt(
         tostring(state.visible[1] == true),
         tostring(state.settings.locked == true),
         tostring(state.settings.show_target == true),
@@ -2084,6 +2111,7 @@ local function print_status()
         tostring(state.settings.show_buff_reminders == true),
         reminder_job,
         reminder_profile.enabled and 'on' or 'off',
+        observed_buff_summary(),
         state.settings.max_buffs,
         state.settings.frame_width,
         state.settings.row_height,
@@ -2108,6 +2136,14 @@ local function clean_event_message(message)
 
         return character;
     end);
+
+    while true do
+        local changed = 0;
+        text, changed = text:gsub('^%[%d%d:%d%d:%d%d%]%s*', '', 1);
+        if (changed == 0) then
+            break;
+        end
+    end
 
     return clean_string(text);
 end
@@ -2186,18 +2222,64 @@ local function observed_buff_event(text)
     return nil, nil, nil;
 end
 
-local function handle_text_in(e)
-    if (e.blocked) then
-        return;
-    end
-
-    local name, buff, enabled = observed_buff_event(clean_event_message(e.message));
+local function process_observed_buff_text(message)
+    local name, buff, enabled = observed_buff_event(clean_event_message(message));
     local key = buff_key_from_name(buff);
     if (name == nil or key == nil) then
         return;
     end
 
     set_observed_buff(name, key, enabled);
+end
+
+local function seed_observed_buffs_from_chat_log()
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    local party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
+    local character = party ~= nil and clean_string(safe_read(function () return party:GetMemberName(0); end, '')) or '';
+    if (#character == 0) then
+        return;
+    end
+
+    local install_path = clean_string(safe_read(function () return AshitaCore:GetInstallPath(); end, ''));
+    if (#install_path == 0) then
+        return;
+    end
+
+    local path = ('%schatlogs\\%s_%s.log'):fmt(install_path, character, os.date('%Y.%m.%d'));
+    local file = io.open(path, 'r');
+    if (file == nil) then
+        return;
+    end
+
+    local lines = { };
+    for line in file:lines() do
+        table.insert(lines, line);
+        if (#lines > 500) then
+            table.remove(lines, 1);
+        end
+    end
+    file:close();
+
+    local start_index = 1;
+    for index = #lines, 1, -1 do
+        if (clean_event_message(lines[index]):find('^=== Area: ') ~= nil) then
+            start_index = index + 1;
+            break;
+        end
+    end
+
+    for index = start_index, #lines, 1 do
+        process_observed_buff_text(lines[index]);
+    end
+end
+
+local function handle_text_in(e)
+    local message = e.message;
+    if (message == nil or message == '') then
+        message = e.modified_message;
+    end
+
+    process_observed_buff_text(message);
 end
 
 local function handle_command(e)
@@ -2265,6 +2347,7 @@ end
 
 ashita.events.register('load', 'load_cb', function ()
     load_config();
+    seed_observed_buffs_from_chat_log();
     log_info('Loaded. Use /ashitaframes config to position frames.');
 end);
 
