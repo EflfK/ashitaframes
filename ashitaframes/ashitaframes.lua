@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.15';
+addon.version   = '0.3.16';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -121,6 +121,7 @@ local COLORS = {
 
 local BUFF_ICON_SIZE = 54;
 local BUFF_ICON_GAP = 6;
+local OBSERVED_LOG_SEED_MAX_LINES = 12000;
 local BUFF_ICON_FILES = {
     protect = 'protect_1.png',
     shell = 'shell_1.png',
@@ -3226,7 +3227,7 @@ local function seed_observed_buffs_from_chat_log()
     local lines = { };
     for line in file:lines() do
         table.insert(lines, line);
-        if (#lines > 500) then
+        if (#lines > OBSERVED_LOG_SEED_MAX_LINES) then
             table.remove(lines, 1);
         end
     end
