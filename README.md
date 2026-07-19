@@ -17,8 +17,11 @@ clean while important unit information remains visible elsewhere on screen.
   exposes that data.
 - Shows compact party status icons for mapped buffs when Ashita exposes them
   for the first party. Protect and Shell are mapped first.
+- Shows large missing-buff reminders for mapped buffs configured per current
+  player job. Missing reminders flash with a crossed icon; active buffs show
+  as normal icons. Protect and Shell are mapped first.
 - Includes an in-game configuration window for visibility, locking, sizing,
-  opacity, party buff display, and alliance display.
+  opacity, party buff display, missing-buff reminders, and alliance display.
 - Provides local UI commands only. It does not target, cast, click-cast, send
   gameplay commands, inject packets, write memory, or automate actions.
 
@@ -34,6 +37,8 @@ This addon is display-only. Keep it in the CatsEyeXI T0/T2 lane:
 
 If click-casting or frame-click targeting is ever considered, treat that as a
 separate active-helper design and get CatsEyeXI policy review before normal use.
+Right-click buff cancellation belongs in the same active-helper category unless
+it is delegated to an approved addon; AshitaFrames does not do it.
 
 ## Install
 
@@ -110,6 +115,7 @@ return {
         show_percent = true,
         show_tp = true,
         show_buffs = true,
+        show_buff_reminders = true,
         max_buffs = 8,
         party_window_x = 36,
         party_window_y = 362,
@@ -119,9 +125,31 @@ return {
         row_height = 56,
         row_gap = 5,
         opacity = 88,
+
+        buff_reminders = {
+            default = {
+                enabled = false,
+                self = true,
+                players = true,
+                trusts = true,
+                buffs = { },
+            },
+
+            BST = {
+                enabled = true,
+                self = true,
+                players = true,
+                trusts = true,
+                buffs = { 'protect' },
+            },
+        },
     },
 }
 ```
+
+`buff_reminders` is keyed by your current main job. Each profile can enable or
+disable reminders for yourself (`self`), other players (`players`), and trusts
+(`trusts`). Supported reminder keys are currently `protect` and `shell`.
 
 Runtime changes made in the config window are not persisted yet. When a layout
 feels right, copy the positions and sizing shown by `/ashitaframes status` into

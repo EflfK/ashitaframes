@@ -13,6 +13,7 @@ return {
         show_percent = true,
         show_tp = true,
         show_buffs = true,
+        show_buff_reminders = true,
         max_buffs = 8,
 
         party_window_x = 36,
@@ -24,6 +25,24 @@ return {
         row_height = 56,
         row_gap = 5,
         opacity = 88,
+
+        buff_reminders = {
+            default = {
+                enabled = false,
+                self = true,
+                players = true,
+                trusts = true,
+                buffs = { },
+            },
+
+            BST = {
+                enabled = true,
+                self = true,
+                players = true,
+                trusts = true,
+                buffs = { 'protect' },
+            },
+        },
     },
 }
 

@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.2.1';
+addon.version   = '0.3.0';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -52,6 +52,7 @@ local DEFAULT_SETTINGS = {
     show_percent = true,
     show_tp = true,
     show_buffs = true,
+    show_buff_reminders = true,
     max_buffs = 8,
     party_window_x = 36,
     party_window_y = 362,
@@ -61,6 +62,22 @@ local DEFAULT_SETTINGS = {
     row_height = 56,
     row_gap = 5,
     opacity = 88,
+    buff_reminders = {
+        default = {
+            enabled = false,
+            self = true,
+            players = true,
+            trusts = true,
+            buffs = { },
+        },
+        BST = {
+            enabled = true,
+            self = true,
+            players = true,
+            trusts = true,
+            buffs = { 'protect' },
+        },
+    },
 };
 
 local COLORS = {
@@ -81,21 +98,36 @@ local COLORS = {
     accent = { 0.42, 0.82, 0.94, 1.00 },
     shadow = { 0.00, 0.00, 0.00, 0.90 },
     warning = { 1.00, 0.56, 0.26, 1.00 },
+    buff_active_border = { 0.08, 0.10, 0.10, 0.90 },
+    buff_missing_bg = { 0.70, 0.05, 0.03, 0.76 },
+    buff_missing_border = { 1.00, 0.10, 0.05, 1.00 },
+    buff_missing_flash = { 1.00, 0.94, 0.18, 1.00 },
 };
 
-local BUFF_ICON_SIZE = 18;
-local BUFF_ICON_GAP = 4;
+local BUFF_ICON_SIZE = 54;
+local BUFF_ICON_GAP = 6;
 local BUFF_ICON_FILES = {
     protect = 'protect_1.png',
     shell = 'shell_1.png',
+};
+local BUFF_DEFINITIONS = {
+    protect = { label = 'Protect', file = BUFF_ICON_FILES.protect },
+    shell = { label = 'Shell', file = BUFF_ICON_FILES.shell },
+};
+local BUFF_REMINDER_PROFILE_DEFAULT = {
+    enabled = false,
+    self = true,
+    players = true,
+    trusts = true,
+    buffs = { },
 };
 
 local LIMITS = {
     width_min = 170,
     width_max = 360,
     row_height_min = 32,
-    row_height_with_buffs_min = 54,
-    row_height_max = 84,
+    party_row_height_with_buffs_min = 92,
+    row_height_max = 132,
     row_gap_min = 0,
     row_gap_max = 14,
     max_buffs_min = 1,
@@ -183,6 +215,138 @@ local function truthy(value)
     return value == true or value == 1;
 end
 
+local function normalize_buff_key(value)
+    local key = clean_string(value):lower():gsub('[%s%-]+', '_');
+    if (key == 'protect' or key == 'protect_1') then
+        return 'protect';
+    end
+    if (key == 'shell' or key == 'shell_1') then
+        return 'shell';
+    end
+
+    return BUFF_DEFINITIONS[key] ~= nil and key or nil;
+end
+
+local function append_buff_key(result, seen, value)
+    local key = normalize_buff_key(value);
+    if (key == nil or seen[key]) then
+        return;
+    end
+
+    seen[key] = true;
+    table.insert(result, key);
+end
+
+local function normalize_buff_list(source)
+    local result = { };
+    local seen = { };
+
+    if (type(source) ~= 'table') then
+        return result;
+    end
+
+    for _, value in ipairs(source) do
+        append_buff_key(result, seen, value);
+    end
+
+    for key, value in pairs(source) do
+        if (type(key) == 'string' and value == true) then
+            append_buff_key(result, seen, key);
+        end
+    end
+
+    return result;
+end
+
+local function copy_buff_list(source)
+    local result = { };
+    if (type(source) ~= 'table') then
+        return result;
+    end
+
+    for index = 1, #source, 1 do
+        result[index] = source[index];
+    end
+
+    return result;
+end
+
+local function normalize_job_key(value)
+    if (type(value) == 'number') then
+        return JOBS[value] or '';
+    end
+
+    local numeric = tonumber(value);
+    if (numeric ~= nil) then
+        return JOBS[numeric] or '';
+    end
+
+    return clean_string(value):upper();
+end
+
+local function normalize_reminder_profile(source, fallback)
+    fallback = fallback or BUFF_REMINDER_PROFILE_DEFAULT;
+
+    local profile = {
+        enabled = fallback.enabled == true,
+        self = fallback.self ~= false,
+        players = fallback.players ~= false,
+        trusts = fallback.trusts ~= false,
+        buffs = copy_buff_list(fallback.buffs),
+    };
+
+    if (type(source) ~= 'table') then
+        return profile;
+    end
+
+    if (source.enabled ~= nil) then
+        profile.enabled = source.enabled == true;
+    end
+    if (source.self ~= nil) then
+        profile.self = source.self == true;
+    end
+    if (source.players ~= nil) then
+        profile.players = source.players == true;
+    end
+    if (source.trusts ~= nil) then
+        profile.trusts = source.trusts == true;
+    end
+
+    local buffs = source.buffs or source.required or source.required_buffs;
+    if (buffs ~= nil) then
+        profile.buffs = normalize_buff_list(buffs);
+    end
+
+    return profile;
+end
+
+local function normalize_buff_reminders(source)
+    local result = { };
+    local default_source = nil;
+
+    if (type(source) == 'table') then
+        default_source = source.default;
+        if (default_source == nil and (source.enabled ~= nil or source.buffs ~= nil or source.required ~= nil or source.required_buffs ~= nil)) then
+            default_source = source;
+        end
+    end
+
+    result.default = normalize_reminder_profile(default_source, BUFF_REMINDER_PROFILE_DEFAULT);
+
+    if (type(source) ~= 'table') then
+        return result;
+    end
+
+    for key, value in pairs(source) do
+        local job = normalize_job_key(key);
+        if (job ~= '' and job ~= 'DEFAULT' and type(value) == 'table') then
+            result[job] = normalize_reminder_profile(value, result.default);
+        end
+    end
+
+    return result;
+end
+
 local function overlay_settings(target, source)
     if (type(source) ~= 'table') then
         return target;
@@ -209,17 +373,18 @@ local function normalize_settings(settings)
     settings.show_percent = settings.show_percent ~= false;
     settings.show_tp = settings.show_tp ~= false;
     settings.show_buffs = settings.show_buffs ~= false;
+    settings.show_buff_reminders = settings.show_buff_reminders ~= false;
 
     settings.party_window_x = clamp_int(settings.party_window_x, -2000, 4000);
     settings.party_window_y = clamp_int(settings.party_window_y, -2000, 4000);
     settings.target_window_x = clamp_int(settings.target_window_x, -2000, 4000);
     settings.target_window_y = clamp_int(settings.target_window_y, -2000, 4000);
     settings.frame_width = clamp_int(settings.frame_width, LIMITS.width_min, LIMITS.width_max);
-    local row_height_min = settings.show_buffs and LIMITS.row_height_with_buffs_min or LIMITS.row_height_min;
-    settings.row_height = clamp_int(settings.row_height, row_height_min, LIMITS.row_height_max);
+    settings.row_height = clamp_int(settings.row_height, LIMITS.row_height_min, LIMITS.row_height_max);
     settings.row_gap = clamp_int(settings.row_gap, LIMITS.row_gap_min, LIMITS.row_gap_max);
     settings.max_buffs = clamp_int(settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
     settings.opacity = clamp_int(settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max);
+    settings.buff_reminders = normalize_buff_reminders(settings.buff_reminders);
 
     return settings;
 end
@@ -447,38 +612,116 @@ local function load_buff_icon(filename)
     return icon;
 end
 
-local function buff_icon_file(buff_id)
-    local name = buff_name(buff_id):lower();
+local function buff_key_from_name(name)
+    name = clean_string(name):lower();
     if (name:find('protect', 1, true) ~= nil) then
-        return BUFF_ICON_FILES.protect;
+        return 'protect';
     end
     if (name:find('shell', 1, true) ~= nil) then
-        return BUFF_ICON_FILES.shell;
+        return 'shell';
     end
 
     return nil;
 end
 
-local function buff_icon_items(buffs)
+local function buff_key_from_id(buff_id)
+    return buff_key_from_name(buff_name(buff_id));
+end
+
+local function active_buff_key_lookup(buffs)
+    local lookup = { };
+    if (type(buffs) ~= 'table') then
+        return lookup;
+    end
+
+    for index = 1, #buffs, 1 do
+        local key = buff_key_from_id(buffs[index]);
+        if (key ~= nil) then
+            lookup[key] = true;
+        end
+    end
+
+    return lookup;
+end
+
+local function reminder_profile_for_job(job)
+    local reminders = state.settings.buff_reminders;
+    if (type(reminders) ~= 'table') then
+        return BUFF_REMINDER_PROFILE_DEFAULT;
+    end
+
+    return reminders[job] or reminders.default or BUFF_REMINDER_PROFILE_DEFAULT;
+end
+
+local function unit_reminder_enabled(unit, profile)
+    if (unit.same_zone == false or profile.enabled ~= true) then
+        return false;
+    end
+    if (unit.category == 'self') then
+        return profile.self == true;
+    end
+    if (unit.category == 'trust') then
+        return profile.trusts == true;
+    end
+
+    return profile.players == true;
+end
+
+local function reminder_buff_keys(unit)
+    if (not state.settings.show_buff_reminders or unit.kind ~= 'party') then
+        return { };
+    end
+
+    local profile = reminder_profile_for_job(unit.reminder_job or 'default');
+    if (not unit_reminder_enabled(unit, profile)) then
+        return { };
+    end
+
+    return profile.buffs or { };
+end
+
+local function buff_icon_items(unit)
     local items = { };
-    if (type(buffs) ~= 'table' or #buffs == 0) then
+    if (type(unit.buffs) ~= 'table') then
         return items;
     end
 
     local max_buffs = state.settings.max_buffs or DEFAULT_SETTINGS.max_buffs;
-    for index = 1, #buffs, 1 do
+    local active_keys = active_buff_key_lookup(unit.buffs);
+
+    for index = 1, #unit.buffs, 1 do
         if (#items >= max_buffs) then
             break;
         end
 
-        local buff_id = buffs[index];
-        local filename = buff_icon_file(buff_id);
-        local icon = filename ~= nil and load_buff_icon(filename) or nil;
+        local buff_id = unit.buffs[index];
+        local key = buff_key_from_id(buff_id);
+        local definition = key ~= nil and BUFF_DEFINITIONS[key] or nil;
+        local icon = definition ~= nil and load_buff_icon(definition.file) or nil;
         if (icon ~= nil) then
             table.insert(items, {
                 id = buff_id,
+                key = key,
                 name = buff_name(buff_id),
                 handle = icon.handle,
+                state = 'active',
+            });
+        end
+    end
+
+    for _, key in ipairs(reminder_buff_keys(unit)) do
+        if (#items >= max_buffs) then
+            break;
+        end
+
+        local definition = BUFF_DEFINITIONS[key];
+        local icon = definition ~= nil and load_buff_icon(definition.file) or nil;
+        if (icon ~= nil and active_keys[key] ~= true) then
+            table.insert(items, {
+                key = key,
+                name = definition.label,
+                handle = icon.handle,
+                state = 'missing',
             });
         end
     end
@@ -486,7 +729,39 @@ local function buff_icon_items(buffs)
     return items;
 end
 
-local function party_member_unit(party, index, self_zone)
+local function current_player_job_key(party)
+    if (party == nil) then
+        local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+        party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
+    end
+
+    if (party == nil) then
+        return 'default';
+    end
+
+    local job_id = safe_read(function () return party:GetMemberMainJob(0); end, nil);
+    local job = normalize_job_key(job_id);
+    return #job > 0 and job or 'default';
+end
+
+local function party_member_category(index, target_index)
+    if (index == 0) then
+        return 'self';
+    end
+
+    if (target_index ~= nil and target_index ~= 0) then
+        local entity = safe_read(function () return GetEntity(target_index); end, nil);
+        local entity_type = entity ~= nil and entity.Type or nil;
+        local trust_owner = entity ~= nil and entity.TrustOwnerTargetIndex or nil;
+        if (entity_type == 8 or (trust_owner ~= nil and trust_owner ~= 0)) then
+            return 'trust';
+        end
+    end
+
+    return 'player';
+end
+
+local function party_member_unit(party, index, self_zone, reminder_job)
     local active = truthy(safe_read(function () return party:GetMemberIsActive(index); end, false));
     local name = clean_string(safe_read(function () return party:GetMemberName(index); end, ''));
     local server_id = safe_read(function () return party:GetMemberServerId(index); end, 0);
@@ -505,6 +780,8 @@ local function party_member_unit(party, index, self_zone)
         tag = tag,
         index = index,
         name = #name > 0 and name or ('Slot %d'):fmt(index + 1),
+        category = party_member_category(index, target_index),
+        reminder_job = reminder_job,
         hp_pct = safe_read(function () return party:GetMemberHPPercent(index); end, nil),
         mp_pct = safe_read(function () return party:GetMemberMPPercent(index); end, nil),
         tp = safe_read(function () return party:GetMemberTP(index); end, nil),
@@ -531,11 +808,12 @@ local function collect_party_units()
     end
 
     local self_zone = safe_read(function () return party:GetMemberZone(0); end, nil);
+    local reminder_job = current_player_job_key(party);
     local max_index = state.settings.show_alliance and 17 or 5;
     local units = { };
 
     for index = 0, max_index, 1 do
-        local unit = party_member_unit(party, index, self_zone);
+        local unit = party_member_unit(party, index, self_zone, reminder_job);
         if (unit ~= nil) then
             table.insert(units, unit);
         end
@@ -676,31 +954,62 @@ local function unit_right_label(unit)
     return table.concat(pieces, ' ');
 end
 
-local function draw_buff_icon_row(unit, x, y, width)
+local function draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint)
+    local pad = 3;
+    local min = { icon_x - pad, icon_y - pad };
+    local max = { icon_x + BUFF_ICON_SIZE + pad, icon_y + BUFF_ICON_SIZE + pad };
+
+    if (item.state == 'missing') then
+        local pulse = (math.sin(os.clock() * 7.0) + 1.0) * 0.5;
+        local pulse_alpha = alpha * (0.62 + (pulse * 0.38));
+        local border_color = pulse > 0.5 and COLORS.buff_missing_flash or COLORS.buff_missing_border;
+
+        draw_list:AddRectFilled(min, max, color_u32(apply_alpha(COLORS.buff_missing_bg, pulse_alpha)), 4.0);
+        draw_list:AddRect(min, max, color_u32(apply_alpha(border_color, alpha)), 4.0, ImDrawCornerFlags_All, 3.0);
+    else
+        draw_list:AddRectFilled(min, max, color_u32(apply_alpha(COLORS.shadow, alpha * 0.56)), 4.0);
+        draw_list:AddRect(min, max, color_u32(apply_alpha(COLORS.buff_active_border, alpha)), 4.0, ImDrawCornerFlags_All, 1.0);
+    end
+
+    imgui.SetCursorScreenPos({ icon_x, icon_y });
+    imgui.Image(item.handle, { BUFF_ICON_SIZE, BUFF_ICON_SIZE }, { 0, 0 }, { 1, 1 }, tint, { 0, 0, 0, 0 });
+
+    if (item.state == 'missing') then
+        local mark_color = color_u32(apply_alpha(COLORS.buff_missing_border, alpha));
+        draw_list:AddLine({ icon_x + 7, icon_y + 7 }, { icon_x + BUFF_ICON_SIZE - 7, icon_y + BUFF_ICON_SIZE - 7 }, mark_color, 3.0);
+        draw_list:AddLine({ icon_x + BUFF_ICON_SIZE - 7, icon_y + 7 }, { icon_x + 7, icon_y + BUFF_ICON_SIZE - 7 }, mark_color, 3.0);
+    end
+end
+
+local function draw_buff_icon_row(unit, x, y, width, alpha)
     if (not state.settings.show_buffs or unit.kind ~= 'party') then
         return;
     end
 
-    local items = buff_icon_items(unit.buffs);
+    local items = buff_icon_items(unit);
     if (#items == 0) then
         return;
     end
 
+    local draw_list = imgui.GetWindowDrawList();
     local tint = unit.dim and { 0.62, 0.62, 0.62, 0.62 } or { 1.00, 1.00, 1.00, 1.00 };
     local icon_x = x + 8;
-    local icon_y = y + 21;
+    local icon_y = y + 24;
     local max_x = x + width - 8;
 
     for _, item in ipairs(items) do
-        if ((icon_x + BUFF_ICON_SIZE) > max_x) then
+        if ((icon_x + BUFF_ICON_SIZE + 3) > max_x) then
             break;
         end
 
-        imgui.SetCursorScreenPos({ icon_x, icon_y });
-        imgui.Image(item.handle, { BUFF_ICON_SIZE, BUFF_ICON_SIZE }, { 0, 0 }, { 1, 1 }, tint, { 0, 0, 0, 0 });
+        draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint);
         if (imgui.IsItemHovered()) then
             imgui.BeginTooltip();
-            imgui.Text(item.name);
+            if (item.state == 'missing') then
+                imgui.TextColored(COLORS.warning, ('Missing: %s'):fmt(item.name));
+            else
+                imgui.Text(item.name);
+            end
             imgui.EndTooltip();
         end
 
@@ -739,7 +1048,7 @@ local function draw_unit_row(unit, width, row_height)
         draw_text(draw_list, x + width - right_width - 8, y + 5, COLORS.text_muted, right);
     end
 
-    draw_buff_icon_row(unit, x, y, width);
+    draw_buff_icon_row(unit, x, y, width, alpha);
 
     draw_bar(draw_list, bar_x, hp_y, bar_w, 6, unit.hp_pct, hp_color, alpha);
 
@@ -757,6 +1066,14 @@ local function draw_unit_row(unit, width, row_height)
     end
 
     imgui.Dummy({ width, row_height + settings.row_gap });
+end
+
+local function effective_row_height(unit)
+    if (unit.kind == 'party' and state.settings.show_buffs) then
+        return math.max(state.settings.row_height, LIMITS.party_row_height_with_buffs_min);
+    end
+
+    return state.settings.row_height;
 end
 
 local function render_window(title, open_state, x, y, width, units, position_callback)
@@ -781,7 +1098,7 @@ local function render_window(title, open_state, x, y, width, units, position_cal
         position_callback(current_x, current_y);
 
         for _, unit in ipairs(units) do
-            draw_unit_row(unit, width, settings.row_height);
+            draw_unit_row(unit, width, effective_row_height(unit));
         end
     end
 
@@ -895,14 +1212,29 @@ local function render_config_window()
             state.settings = normalize_settings(state.settings);
         end
 
+        local show_buff_reminders = state.settings.show_buff_reminders == true;
+        if (imgui.Checkbox('Missing Buff Reminders##ashitaframes_show_buff_reminders', { show_buff_reminders })) then
+            state.settings.show_buff_reminders = not show_buff_reminders;
+        end
+
+        local reminder_job = current_player_job_key();
+        local reminder_profile = reminder_profile_for_job(reminder_job);
+        local reminder_buffs = table.concat(reminder_profile.buffs or { }, ', ');
+        if (#reminder_buffs == 0) then
+            reminder_buffs = 'none';
+        end
+        imgui.TextColored(COLORS.text_muted, ('Reminder profile: %s %s [%s]'):fmt(
+            reminder_job,
+            reminder_profile.enabled and 'on' or 'off',
+            reminder_buffs));
+
         imgui.Separator();
         imgui.TextColored(COLORS.accent, 'Layout');
         render_int_control('Frame Width', 'frame_width', state.settings.frame_width, LIMITS.width_min, LIMITS.width_max, function (value)
             state.settings.frame_width = clamp_int(value, LIMITS.width_min, LIMITS.width_max);
         end);
-        local row_height_min = state.settings.show_buffs and LIMITS.row_height_with_buffs_min or LIMITS.row_height_min;
-        render_int_control('Row Height', 'row_height', state.settings.row_height, row_height_min, LIMITS.row_height_max, function (value)
-            state.settings.row_height = clamp_int(value, row_height_min, LIMITS.row_height_max);
+        render_int_control('Base Row Height', 'row_height', state.settings.row_height, LIMITS.row_height_min, LIMITS.row_height_max, function (value)
+            state.settings.row_height = clamp_int(value, LIMITS.row_height_min, LIMITS.row_height_max);
         end);
         render_int_control('Row Gap', 'row_gap', state.settings.row_gap, LIMITS.row_gap_min, LIMITS.row_gap_max, function (value)
             state.settings.row_gap = clamp_int(value, LIMITS.row_gap_min, LIMITS.row_gap_max);
@@ -937,13 +1269,19 @@ local function print_help()
 end
 
 local function print_status()
-    log_info(('visible=%s locked=%s target=%s party=%s alliance=%s buffs=%s maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) target=(%d,%d)'):fmt(
+    local reminder_job = current_player_job_key();
+    local reminder_profile = reminder_profile_for_job(reminder_job);
+
+    log_info(('visible=%s locked=%s target=%s party=%s alliance=%s buffs=%s reminders=%s reminderJob=%s reminderProfile=%s maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) target=(%d,%d)'):fmt(
         tostring(state.visible[1] == true),
         tostring(state.settings.locked == true),
         tostring(state.settings.show_target == true),
         tostring(state.settings.show_party == true),
         tostring(state.settings.show_alliance == true),
         tostring(state.settings.show_buffs == true),
+        tostring(state.settings.show_buff_reminders == true),
+        reminder_job,
+        reminder_profile.enabled and 'on' or 'off',
         state.settings.max_buffs,
         state.settings.frame_width,
         state.settings.row_height,
