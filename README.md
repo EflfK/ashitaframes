@@ -121,9 +121,10 @@ reminders. The Target tab includes Dia, Paralyze, and Slow reminders.
 Use Save to write the current window layout and reminder settings to
 `ashitaframes_config.lua`. Self, Party, Pet, and Target frame width, base row
 height, row gap, and opacity are configured independently. Party frame layout
-is also configured separately for total party sizes 1 through 6; while the
-configuration window is open, the party frame fills missing non-self rows with
-preview members for the selected size. Reminder options are filtered to spells
+is also configured separately for total party sizes 1 through 6, including
+columns and rows for stacking party members into grids; while the configuration
+window is open, the party frame fills missing non-self rows with preview members
+for the selected size. Reminder options are filtered to spells
 your current main/sub job can actually cast and that your character has learned. Missing
 target-debuff reminders are also hidden while the spell is on cooldown. Missing
 party-buff reminder flashes are hidden in towns by default; the config window
@@ -183,12 +184,12 @@ return {
         party_row_gap = 5,
         party_opacity = 88,
         party_size_layouts = {
-            [1] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
-            [2] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
-            [3] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
-            [4] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
-            [5] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
-            [6] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
+            [1] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88, columns = 1, rows = 1 },
+            [2] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88, columns = 1, rows = 1 },
+            [3] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88, columns = 1, rows = 2 },
+            [4] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88, columns = 1, rows = 3 },
+            [5] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88, columns = 1, rows = 4 },
+            [6] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88, columns = 1, rows = 5 },
         },
         pet_frame_width = 232,
         pet_row_height = 56,
@@ -230,7 +231,8 @@ return {
 The base `frame_width`, `row_height`, `row_gap`, and `opacity` keys are kept as
 fallbacks for older configs. New saves write separate `self_*`, `party_*`,
 `pet_*`, and `target_*` layout values; party frame saves also write the
-`party_size_layouts` table for size-specific positions and dimensions.
+`party_size_layouts` table for size-specific positions, dimensions, columns,
+and rows.
 
 `buff_reminders` is keyed by your current main job. Each profile can enable or
 disable reminders for yourself (`self`), other players (`players`), and trusts
