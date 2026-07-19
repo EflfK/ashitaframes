@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.16';
+addon.version   = '0.3.18';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -256,6 +256,8 @@ local state = {
     status_icon_cache = { },
     observed_buffs = { },
     observed_target_debuffs = { },
+    observed_target_debuff_names = { },
+    pending_target_debuff_cast = nil,
     observed_buff_zone_id = nil,
     observed_text_events = 0,
     observed_log_path = nil,
@@ -867,6 +869,16 @@ local function observed_name_key(name)
     return name;
 end
 
+function observed_target_name_key(name)
+    name = clean_string(name):lower():gsub('%s+', ' ');
+    name = name:gsub('^the%s+', ''):gsub('^an%s+', ''):gsub('^a%s+', '');
+    if (#name == 0) then
+        return nil;
+    end
+
+    return name;
+end
+
 local function buff_id_for_key(key)
     key = normalize_buff_key(key);
     local definition = key ~= nil and BUFF_DEFINITIONS[key] or nil;
@@ -913,6 +925,8 @@ end
 
 local function clear_observed_target_debuffs()
     state.observed_target_debuffs = { };
+    state.observed_target_debuff_names = { };
+    state.pending_target_debuff_cast = nil;
 end
 
 local function target_debuff_id_for_key(key)
@@ -941,6 +955,25 @@ local function prune_observed_target_debuffs()
             end
         end
     end
+
+    for name, entry in pairs(state.observed_target_debuff_names) do
+        if (type(entry) ~= 'table') then
+            state.observed_target_debuff_names[name] = nil;
+        else
+            local has_active = false;
+            for key, value in pairs(entry) do
+                if (type(value) ~= 'table' or tonumber(value.expires_at) == nil or value.expires_at <= now) then
+                    entry[key] = nil;
+                else
+                    has_active = true;
+                end
+            end
+
+            if (not has_active) then
+                state.observed_target_debuff_names[name] = nil;
+            end
+        end
+    end
 end
 
 local function observed_target_debuff_key_lookup(server_id)
@@ -962,8 +995,33 @@ local function observed_target_debuff_key_lookup(server_id)
     return result;
 end
 
-local function observed_target_debuffs_for_server_id(server_id)
+function observed_target_debuff_name_lookup(name)
+    prune_observed_target_debuffs();
+
+    local name_key = observed_target_name_key(name);
+    local entry = name_key ~= nil and state.observed_target_debuff_names[name_key] or nil;
+    local result = { };
+    if (type(entry) ~= 'table') then
+        return result;
+    end
+
+    for key, value in pairs(entry) do
+        if (type(value) == 'table' and tonumber(value.expires_at) ~= nil and value.expires_at > os.time()) then
+            result[key] = true;
+        end
+    end
+
+    return result;
+end
+
+function observed_target_debuffs_for_unit(server_id, name)
     local active = observed_target_debuff_key_lookup(server_id);
+    for key, enabled in pairs(observed_target_debuff_name_lookup(name)) do
+        if (enabled == true) then
+            active[key] = true;
+        end
+    end
+
     local result = { };
     local seen = { };
 
@@ -2159,7 +2217,7 @@ local function collect_target_unit()
         distance = entity_distance(entity, active_index),
         job = '',
         reminder_job = current_player_job_key(),
-        debuffs = observed_target_debuffs_for_server_id(server_id),
+        debuffs = observed_target_debuffs_for_unit(server_id, name),
         same_zone = true,
         dim = false,
     };
@@ -2949,6 +3007,55 @@ local function set_observed_target_debuff(server_id, key, enabled, spell_id)
     return true;
 end
 
+function set_observed_target_debuff_name(name, key, enabled, spell_id)
+    local name_key = observed_target_name_key(name);
+    key = normalize_target_debuff_key(key);
+    if (name_key == nil or key == nil or target_debuff_id_for_key(key) == nil) then
+        return false;
+    end
+
+    if (enabled == true) then
+        state.observed_target_debuff_names[name_key] = state.observed_target_debuff_names[name_key] or { };
+        state.observed_target_debuff_names[name_key][key] = {
+            status_id = target_debuff_id_for_key(key),
+            spell_id = tonumber(spell_id),
+            expires_at = os.time() + target_debuff_duration_seconds(key, spell_id),
+        };
+        return true;
+    end
+
+    local entry = state.observed_target_debuff_names[name_key];
+    if (type(entry) ~= 'table') then
+        return false;
+    end
+
+    entry[key] = nil;
+    if (next(entry) == nil) then
+        state.observed_target_debuff_names[name_key] = nil;
+    end
+
+    return true;
+end
+
+function clear_observed_target_debuff_name(name)
+    local name_key = observed_target_name_key(name);
+    if (name_key == nil or state.observed_target_debuff_names[name_key] == nil) then
+        return false;
+    end
+
+    state.observed_target_debuff_names[name_key] = nil;
+    return true;
+end
+
+function clear_observed_target_debuff_name_status(name, status)
+    local key = normalize_target_debuff_key(status);
+    if (key == nil) then
+        return false;
+    end
+
+    return set_observed_target_debuff_name(name, key, false);
+end
+
 local function clear_observed_target_debuff_status(server_id, status_id)
     local key = target_debuff_key_from_id(status_id);
     if (key == nil) then
@@ -3197,6 +3304,197 @@ local function process_observed_buff_text(message)
     return set_observed_buff(name, key, enabled);
 end
 
+function current_player_name()
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    local party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
+    return party ~= nil and clean_string(safe_read(function () return party:GetMemberName(0); end, '')) or '';
+end
+
+function target_debuff_key_from_spell_name(spell_name)
+    local key = normalize_target_debuff_key(spell_name);
+    if (key ~= nil) then
+        return key;
+    end
+
+    key = clean_string(spell_name):lower():gsub('[%s%-]+', '_');
+    if (key == 'dia_ii' or key == 'dia_iii' or key == 'dia_iv' or key == 'dia_v' or key == 'diaga') then
+        return 'dia';
+    end
+    if (key == 'paralyze_ii') then
+        return 'paralyze';
+    end
+
+    return nil;
+end
+
+function target_debuff_spell_id_from_name(spell_name)
+    local key = clean_string(spell_name):lower():gsub('[%s%-]+', '_');
+    local ids = {
+        dia = 23,
+        dia_ii = 24,
+        dia_iii = 25,
+        dia_iv = 26,
+        dia_v = 27,
+        diaga = 33,
+        paralyze = 58,
+        paralyze_ii = 80,
+        slow = 56,
+        slow_ii = 79,
+    };
+
+    return ids[key];
+end
+
+function set_pending_target_debuff_cast(spell_name, target_name)
+    local key = target_debuff_key_from_spell_name(spell_name);
+    local target_key = observed_target_name_key(target_name);
+    if (key == nil) then
+        return false;
+    end
+
+    state.pending_target_debuff_cast = {
+        key = key,
+        spell_name = clean_string(spell_name),
+        spell_id = target_debuff_spell_id_from_name(spell_name),
+        target_name = clean_string(target_name),
+        target_key = target_key,
+        started_at = os.time(),
+    };
+    return true;
+end
+
+function pending_target_debuff_cast()
+    local pending = state.pending_target_debuff_cast;
+    if (type(pending) ~= 'table') then
+        return nil;
+    end
+
+    if ((os.time() - (tonumber(pending.started_at) or 0)) > 20) then
+        state.pending_target_debuff_cast = nil;
+        return nil;
+    end
+
+    return pending;
+end
+
+function pending_target_matches(name, key)
+    local pending = pending_target_debuff_cast();
+    if (pending == nil or (key ~= nil and pending.key ~= key)) then
+        return nil;
+    end
+
+    if (pending.target_key ~= nil and observed_target_name_key(name) ~= pending.target_key) then
+        return nil;
+    end
+
+    return pending;
+end
+
+function clear_pending_target_debuff_if_matches(name)
+    local pending = pending_target_debuff_cast();
+    if (pending ~= nil and (pending.target_key == nil or observed_target_name_key(name) == pending.target_key)) then
+        state.pending_target_debuff_cast = nil;
+        return true;
+    end
+
+    return false;
+end
+
+function process_observed_target_debuff_text(message)
+    local text = clean_event_message(message);
+    if (#text == 0) then
+        return false;
+    end
+
+    local player = current_player_name();
+    if (#player > 0) then
+        local actor, spell, target = text:match('^(.-) starts casting (.-) on (.-)%.$');
+        if (actor == player and spell ~= nil and target ~= nil) then
+            return set_pending_target_debuff_cast(spell, target);
+        end
+
+        actor, spell = text:match('^(.-) casts (.-)%.$');
+        if (actor == player and spell ~= nil and target_debuff_key_from_spell_name(spell) ~= nil) then
+            local pending = pending_target_debuff_cast();
+            if (pending == nil or target_debuff_key_from_spell_name(spell) ~= pending.key) then
+                return set_pending_target_debuff_cast(spell, nil);
+            end
+
+            pending.spell_name = clean_string(spell);
+            pending.spell_id = target_debuff_spell_id_from_name(spell) or pending.spell_id;
+            pending.started_at = os.time();
+            return true;
+        end
+
+        actor, spell, target = text:match("^(.-)'s (.-) has no effect on (.-)%.$");
+        if (actor == player and spell ~= nil and target ~= nil and clear_pending_target_debuff_if_matches(target)) then
+            return true;
+        end
+
+        if (text == (player .. "'s casting is interrupted.")) then
+            state.pending_target_debuff_cast = nil;
+            return true;
+        end
+    end
+
+    local target, status = text:match("^(.-)'s (.-) effect wears off%.?$");
+    if (target ~= nil and status ~= nil and clear_observed_target_debuff_name_status(target, status)) then
+        return true;
+    end
+
+    target = text:match('^(.-) falls to the ground%.$');
+    if (target ~= nil) then
+        local cleared = clear_observed_target_debuff_name(target);
+        clear_pending_target_debuff_if_matches(target);
+        return cleared;
+    end
+
+    target = text:match('^.- defeats (.-)%.$');
+    if (target ~= nil) then
+        local cleared = clear_observed_target_debuff_name(target);
+        clear_pending_target_debuff_if_matches(target);
+        return cleared;
+    end
+
+    target = text:match('^Unable to see (.-)%.$') or text:match('^You lose sight of (.-)%.$') or text:match('^(.-) is out of range%.$') or text:match('^(.-) is too far away%.$');
+    if (target ~= nil and clear_pending_target_debuff_if_matches(target)) then
+        return true;
+    end
+
+    target = text:match('^(.-) resists the spell%.$');
+    if (target ~= nil and clear_pending_target_debuff_if_matches(target)) then
+        return true;
+    end
+
+    target = text:match('^(.-) takes %d+ points of damage%.$');
+    local pending = pending_target_matches(target, 'dia');
+    if (pending ~= nil) then
+        state.pending_target_debuff_cast = nil;
+        return set_observed_target_debuff_name(target, pending.key, true, pending.spell_id);
+    end
+
+    target = text:match('^(.-) is paralyzed%.$');
+    pending = pending_target_matches(target, 'paralyze');
+    if (pending ~= nil) then
+        state.pending_target_debuff_cast = nil;
+        return set_observed_target_debuff_name(target, pending.key, true, pending.spell_id);
+    end
+
+    target = text:match('^(.-) is slowed%.$');
+    pending = pending_target_matches(target, 'slow');
+    if (pending ~= nil) then
+        state.pending_target_debuff_cast = nil;
+        return set_observed_target_debuff_name(target, pending.key, true, pending.spell_id);
+    end
+
+    return false;
+end
+
+function process_observed_text(message)
+    local handled = process_observed_buff_text(message);
+    return process_observed_target_debuff_text(message) or handled;
+end
+
 local function current_chat_log_path()
     local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
     local party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
@@ -3243,7 +3541,7 @@ local function seed_observed_buffs_from_chat_log()
     end
 
     for index = start_index, #lines, 1 do
-        process_observed_buff_text(lines[index]);
+        process_observed_text(lines[index]);
     end
 
     state.observed_log_path = path;
@@ -3284,7 +3582,7 @@ local function poll_observed_buffs_from_chat_log()
 
     file:seek('set', position);
     for line in file:lines() do
-        if (process_observed_buff_text(line)) then
+        if (process_observed_text(line)) then
             state.observed_log_events = state.observed_log_events + 1;
         end
     end
@@ -3305,7 +3603,7 @@ local function handle_text_in(e)
         local text = tostring(message or '');
         if (#text > 0 and seen[text] ~= true) then
             seen[text] = true;
-            if (process_observed_buff_text(text)) then
+            if (process_observed_text(text)) then
                 state.observed_text_events = state.observed_text_events + 1;
                 return;
             end
