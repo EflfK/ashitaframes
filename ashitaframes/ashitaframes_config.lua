@@ -20,6 +20,7 @@ return {
         hide_buff_reminders_in_towns = true,
         buff_reminder_suppressed_zone_ids = { },
         max_buffs = 8,
+        party_preview_size = 6,
 
         party_window_x = 36,
         party_window_y = 362,
@@ -36,6 +37,14 @@ return {
         party_row_height = 56,
         party_row_gap = 5,
         party_opacity = 88,
+        party_size_layouts = {
+            [1] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
+            [2] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
+            [3] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
+            [4] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
+            [5] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
+            [6] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
+        },
         pet_frame_width = 232,
         pet_row_height = 56,
         pet_row_gap = 5,

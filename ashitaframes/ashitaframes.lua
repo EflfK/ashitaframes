@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.20';
+addon.version   = '0.3.21';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -64,6 +64,7 @@ local DEFAULT_SETTINGS = {
     hide_buff_reminders_in_towns = true,
     buff_reminder_suppressed_zone_ids = { },
     max_buffs = 8,
+    party_preview_size = 6,
     party_window_x = 36,
     party_window_y = 362,
     pet_window_x = 36,
@@ -78,6 +79,7 @@ local DEFAULT_SETTINGS = {
     party_row_height = -1,
     party_row_gap = -1,
     party_opacity = -1,
+    party_size_layouts = { },
     pet_frame_width = -1,
     pet_row_height = -1,
     pet_row_gap = -1,
@@ -363,6 +365,59 @@ function frame_layout(kind)
         row_gap = settings[('%s_row_gap'):fmt(kind)] or settings.row_gap,
         opacity = settings[('%s_opacity'):fmt(kind)] or settings.opacity,
     };
+end
+
+function party_size(value)
+    return clamp_int(value, 1, 6);
+end
+
+function normalize_party_size_layout(layout, size, settings)
+    layout = type(layout) == 'table' and layout or { };
+
+    return {
+        x = clamp_int(layout.x or layout.window_x or settings.party_window_x, -2000, 4000),
+        y = clamp_int(layout.y or layout.window_y or settings.party_window_y, -2000, 4000),
+        width = normalize_frame_width(layout.frame_width or layout.width, settings.party_frame_width),
+        row_height = normalize_frame_row_height(layout.row_height, settings.party_row_height),
+        row_gap = normalize_frame_row_gap(layout.row_gap, settings.party_row_gap),
+        opacity = normalize_frame_opacity(layout.opacity, settings.party_opacity),
+        size = party_size(size),
+    };
+end
+
+function normalize_party_size_layouts(layouts, settings)
+    layouts = type(layouts) == 'table' and layouts or { };
+
+    local result = { };
+    for size = 1, 6, 1 do
+        result[size] = normalize_party_size_layout(layouts[size], size, settings);
+    end
+
+    return result;
+end
+
+function party_layout_for_size(size)
+    size = party_size(size);
+    if (type(state.settings.party_size_layouts) ~= 'table') then
+        state.settings.party_size_layouts = normalize_party_size_layouts(nil, state.settings);
+    end
+    if (type(state.settings.party_size_layouts[size]) ~= 'table') then
+        state.settings.party_size_layouts[size] = normalize_party_size_layout(nil, size, state.settings);
+    end
+
+    return state.settings.party_size_layouts[size];
+end
+
+function party_size_from_units(units)
+    return party_size(type(units) == 'table' and #units or 1);
+end
+
+function update_party_layout_position(size, x, y)
+    local layout = party_layout_for_size(size);
+    layout.x = clamp_int(x, -2000, 4000);
+    layout.y = clamp_int(y, -2000, 4000);
+    state.party_window_x = layout.x;
+    state.party_window_y = layout.y;
 end
 
 local function apply_alpha(color, alpha)
@@ -711,11 +766,13 @@ local function normalize_settings(settings)
     settings.row_height = clamp_int(settings.row_height, LIMITS.row_height_min, LIMITS.row_height_max);
     settings.row_gap = clamp_int(settings.row_gap, LIMITS.row_gap_min, LIMITS.row_gap_max);
     settings.max_buffs = clamp_int(settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
+    settings.party_preview_size = party_size(settings.party_preview_size);
     settings.opacity = clamp_int(settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max);
     settings.party_frame_width = normalize_frame_width(settings.party_frame_width, settings.frame_width);
     settings.party_row_height = normalize_frame_row_height(settings.party_row_height, settings.row_height);
     settings.party_row_gap = normalize_frame_row_gap(settings.party_row_gap, settings.row_gap);
     settings.party_opacity = normalize_frame_opacity(settings.party_opacity, settings.opacity);
+    settings.party_size_layouts = normalize_party_size_layouts(settings.party_size_layouts, settings);
     settings.pet_frame_width = normalize_frame_width(settings.pet_frame_width, settings.frame_width);
     settings.pet_row_height = normalize_frame_row_height(settings.pet_row_height, settings.row_height);
     settings.pet_row_gap = normalize_frame_row_gap(settings.pet_row_gap, settings.row_gap);
@@ -2072,6 +2129,19 @@ local function append_target_debuff_profile_config(lines, key, profile)
     table.insert(lines, '            },');
 end
 
+function append_party_size_layout_config(lines, size, layout)
+    layout = normalize_party_size_layout(layout, size, state.settings);
+
+    table.insert(lines, ('            [%d] = { x = %d, y = %d, frame_width = %d, row_height = %d, row_gap = %d, opacity = %d },'):fmt(
+        size,
+        layout.x,
+        layout.y,
+        layout.width,
+        layout.row_height,
+        layout.row_gap,
+        layout.opacity));
+end
+
 local function capture_runtime_settings_for_save()
     state.settings.visible = state.visible[1] == true;
     state.settings.party_window_x = state.party_window_x;
@@ -2080,6 +2150,7 @@ local function capture_runtime_settings_for_save()
     state.settings.pet_window_y = state.pet_window_y;
     state.settings.target_window_x = state.target_window_x;
     state.settings.target_window_y = state.target_window_y;
+    state.settings.party_size_layouts = normalize_party_size_layouts(state.settings.party_size_layouts, state.settings);
     state.settings.buff_reminders = normalize_buff_reminders(state.settings.buff_reminders);
     state.settings.target_debuff_reminders = normalize_target_debuff_reminders(state.settings.target_debuff_reminders);
     state.settings.buff_reminder_suppressed_zone_ids = normalize_zone_id_list(state.settings.buff_reminder_suppressed_zone_ids);
@@ -2113,6 +2184,7 @@ local function config_text_from_settings(settings)
         ('        hide_buff_reminders_in_towns = %s,'):fmt(bool_text(settings.hide_buff_reminders_in_towns)),
         ('        buff_reminder_suppressed_zone_ids = %s,'):fmt(zone_id_list_text(settings.buff_reminder_suppressed_zone_ids)),
         ('        max_buffs = %d,'):fmt(settings.max_buffs),
+        ('        party_preview_size = %d,'):fmt(settings.party_preview_size),
         '',
         ('        party_window_x = %d,'):fmt(state.party_window_x),
         ('        party_window_y = %d,'):fmt(state.party_window_y),
@@ -2130,6 +2202,17 @@ local function config_text_from_settings(settings)
         ('        party_row_height = %d,'):fmt(settings.party_row_height),
         ('        party_row_gap = %d,'):fmt(settings.party_row_gap),
         ('        party_opacity = %d,'):fmt(settings.party_opacity),
+        '        party_size_layouts = {',
+    };
+
+    for size = 1, 6, 1 do
+        append_party_size_layout_config(lines, size, settings.party_size_layouts[size]);
+    end
+
+    table.insert(lines, '        },');
+    table.insert(lines, '');
+
+    local tail_lines = {
         ('        pet_frame_width = %d,'):fmt(settings.pet_frame_width),
         ('        pet_row_height = %d,'):fmt(settings.pet_row_height),
         ('        pet_row_gap = %d,'):fmt(settings.pet_row_gap),
@@ -2141,6 +2224,10 @@ local function config_text_from_settings(settings)
         '',
         '        buff_reminders = {',
     };
+
+    for _, line in ipairs(tail_lines) do
+        table.insert(lines, line);
+    end
 
     for _, key in ipairs(reminder_profile_keys(reminders)) do
         append_profile_config(lines, key, reminders[key]);
@@ -2247,6 +2334,40 @@ local function collect_party_units()
     end
 
     return units;
+end
+
+function party_preview_unit(index)
+    return {
+        kind = 'party',
+        tag = index == 0 and 'YOU' or tostring(index + 1),
+        index = index,
+        name = index == 0 and 'You' or ('Party %d'):fmt(index + 1),
+        category = index == 0 and 'self' or 'player',
+        reminder_job = current_player_job_key(),
+        reminders_suppressed = true,
+        hp_pct = index == 0 and 100 or math.max(48, 100 - (index * 7)),
+        mp_pct = index == 0 and 100 or math.max(34, 92 - (index * 8)),
+        tp = index == 0 and 1000 or index * 230,
+        job = index == 0 and current_player_job_key() or ({ 'WAR30/MNK15', 'WHM30/BLM15', 'SAM30/WAR15', 'BRD30/WHM15', 'RDM30/WHM15' })[index] or '',
+        buffs = index < 2 and { 40, 41 } or { 40 },
+        same_zone = true,
+        dim = false,
+    };
+end
+
+function party_preview_units(units, size)
+    size = party_size(size);
+
+    local result = { };
+    for index = 1, size, 1 do
+        if (type(units) == 'table' and units[index] ~= nil) then
+            table.insert(result, units[index]);
+        else
+            table.insert(result, party_preview_unit(index - 1));
+        end
+    end
+
+    return result;
 end
 
 local function collect_target_unit()
@@ -2677,16 +2798,22 @@ local function render_party()
     end
 
     local units = collect_party_units();
+    local size = party_size_from_units(units);
+    if (state.config_visible[1] == true) then
+        size = party_size(state.settings.party_preview_size);
+        units = party_preview_units(units, size);
+    end
+
+    local layout = party_layout_for_size(size);
     render_window(
-        'AshitaFrames Party###AshitaFramesParty',
+        ('AshitaFrames Party %d###AshitaFramesParty'):fmt(size),
         state.visible,
-        state.party_window_x,
-        state.party_window_y,
-        frame_layout('party'),
+        layout.x,
+        layout.y,
+        layout,
         units,
         function (x, y)
-            state.party_window_x = math.floor(x + 0.5);
-            state.party_window_y = math.floor(y + 0.5);
+            update_party_layout_position(size, x, y);
         end);
 end
 
@@ -2751,6 +2878,33 @@ function render_frame_layout_controls(kind, label)
     end);
     render_int_control('Opacity', ('%s_opacity'):fmt(kind), state.settings[opacity_field], LIMITS.opacity_min, LIMITS.opacity_max, function (value)
         state.settings[opacity_field] = normalize_frame_opacity(value, state.settings.opacity);
+        mark_config_changed();
+    end, '%');
+end
+
+function render_party_size_layout_controls()
+    render_int_control('Party Size', 'party_preview_size', state.settings.party_preview_size, 1, 6, function (value)
+        state.settings.party_preview_size = party_size(value);
+        mark_config_changed();
+    end, 'members');
+
+    local size = party_size(state.settings.party_preview_size);
+    local layout = party_layout_for_size(size);
+    imgui.TextColored(COLORS.accent, ('Party Frame %d'):fmt(size));
+    render_int_control('Width', ('party_%d_frame_width'):fmt(size), layout.width, LIMITS.width_min, LIMITS.width_max, function (value)
+        layout.width = normalize_frame_width(value, state.settings.party_frame_width);
+        mark_config_changed();
+    end);
+    render_int_control('Base Row Height', ('party_%d_row_height'):fmt(size), layout.row_height, LIMITS.row_height_min, LIMITS.row_height_max, function (value)
+        layout.row_height = normalize_frame_row_height(value, state.settings.party_row_height);
+        mark_config_changed();
+    end);
+    render_int_control('Row Gap', ('party_%d_row_gap'):fmt(size), layout.row_gap, LIMITS.row_gap_min, LIMITS.row_gap_max, function (value)
+        layout.row_gap = normalize_frame_row_gap(value, state.settings.party_row_gap);
+        mark_config_changed();
+    end);
+    render_int_control('Opacity', ('party_%d_opacity'):fmt(size), layout.opacity, LIMITS.opacity_min, LIMITS.opacity_max, function (value)
+        layout.opacity = normalize_frame_opacity(value, state.settings.party_opacity);
         mark_config_changed();
     end, '%');
 end
@@ -3017,7 +3171,7 @@ local function render_config_window()
 
         imgui.Separator();
         imgui.TextColored(COLORS.accent, 'Layout');
-        render_frame_layout_controls('party', 'Party Frame');
+        render_party_size_layout_controls();
         imgui.Separator();
         render_frame_layout_controls('pet', 'Pet Frame');
         imgui.Separator();
@@ -3029,7 +3183,8 @@ local function render_config_window()
         end, 'buffs');
 
         imgui.Separator();
-        imgui.Text(('Party pos: %d, %d'):fmt(state.party_window_x, state.party_window_y));
+        local party_layout = party_layout_for_size(state.settings.party_preview_size);
+        imgui.Text(('Party %d pos: %d, %d'):fmt(party_size(state.settings.party_preview_size), party_layout.x, party_layout.y));
         imgui.Text(('Pet pos: %d, %d'):fmt(state.pet_window_x, state.pet_window_y));
         imgui.Text(('Target pos: %d, %d'):fmt(state.target_window_x, state.target_window_y));
 
@@ -3096,8 +3251,10 @@ end
 local function print_status()
     local reminder_job = current_player_job_key();
     local reminder_profile = reminder_profile_for_job(reminder_job);
+    local status_party_size = party_size(state.settings.party_preview_size);
+    local status_party_layout = party_layout_for_size(status_party_size);
 
-    log_info(('visible=%s locked=%s target=%s party=%s pet=%s alliance=%s buffs=%s reminders=%s targetDebuffs=%s targetDebuffReminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d party=(%d,%d %dx%d gap=%d op=%d) pet=(%d,%d %dx%d gap=%d op=%d) target=(%d,%d %dx%d gap=%d op=%d)'):fmt(
+    log_info(('visible=%s locked=%s target=%s party=%s pet=%s alliance=%s buffs=%s reminders=%s targetDebuffs=%s targetDebuffReminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d partySize=%d party=(%d,%d %dx%d gap=%d op=%d) pet=(%d,%d %dx%d gap=%d op=%d) target=(%d,%d %dx%d gap=%d op=%d)'):fmt(
         tostring(state.visible[1] == true),
         tostring(state.settings.locked == true),
         tostring(state.settings.show_target == true),
@@ -3114,12 +3271,13 @@ local function print_status()
         state.observed_text_events,
         state.observed_log_events,
         state.settings.max_buffs,
-        state.party_window_x,
-        state.party_window_y,
-        state.settings.party_frame_width,
-        state.settings.party_row_height,
-        state.settings.party_row_gap,
-        state.settings.party_opacity,
+        status_party_size,
+        status_party_layout.x,
+        status_party_layout.y,
+        status_party_layout.width,
+        status_party_layout.row_height,
+        status_party_layout.row_gap,
+        status_party_layout.opacity,
         state.pet_window_x,
         state.pet_window_y,
         state.settings.pet_frame_width,
