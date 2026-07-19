@@ -19,6 +19,8 @@ clean while important unit information remains visible elsewhere on screen.
 - Shows compact party status icons for mapped buffs from Ashita status memory
   when available, plus observed party effect messages for trusts. Protect and
   Shell are mapped first.
+- Shows compact countdown overlays on active mapped buff icons when a timer is
+  known. Observed trust timers use configurable default durations.
 - Shows large missing-buff reminders for mapped buffs configured per current
   player job. Missing reminders flash with a crossed icon; active buffs show
   as normal icons. Trust reminders clear after observed gain messages and reset
@@ -28,8 +30,8 @@ clean while important unit information remains visible elsewhere on screen.
   after reloads and new casts.
   Protect and Shell are mapped first.
 - Includes a persistent in-game configuration window for visibility, locking,
-  sizing, opacity, party buff display, missing-buff reminders, and alliance
-  display.
+  sizing, opacity, party buff display, buff timers, missing-buff reminders, and
+  alliance display.
 - Provides local UI commands only. It does not target, cast, click-cast, send
   gameplay commands, inject packets, write memory, or automate actions.
 
@@ -139,9 +141,14 @@ return {
         show_percent = true,
         show_tp = true,
         show_buffs = true,
+        show_buff_timers = true,
         show_buff_reminders = true,
         hide_buff_reminders_in_towns = true,
         buff_reminder_suppressed_zone_ids = { },
+        buff_timer_duration_seconds = {
+            protect = 1800,
+            shell = 1800,
+        },
         max_buffs = 8,
         party_window_x = 36,
         party_window_y = 362,
@@ -182,6 +189,11 @@ current main/sub job.
 `hide_buff_reminders_in_towns` hides missing-buff flashes in town and safe hub
 zones. Add zone ids to `buff_reminder_suppressed_zone_ids` to hide missing
 reminders in additional zones.
+
+`show_buff_timers` draws timer text over active mapped buff icons when
+AshitaFrames has an expiry. Local-player timers use Ashita status timer memory.
+Observed party/trust timers use `buff_timer_duration_seconds` as their default
+duration.
 
 ## Development
 
