@@ -1052,6 +1052,17 @@ function estimate_resource_max(current, percent)
     return estimated;
 end
 
+function resource_percent_from_pair(current, max)
+    current = resource_current_value(current);
+    max = resource_current_value(max);
+
+    if (current == nil or max == nil or max <= 0) then
+        return nil;
+    end
+
+    return clamp((current / max) * 100, 0, 100);
+end
+
 local function entity_distance(entity, index)
     if (entity == nil or index == nil or index <= 0) then
         return nil;
@@ -2841,13 +2852,25 @@ local function party_member_unit(party, index, self_zone, reminder_job, reminder
         return nil;
     end
 
+    local player = index == 0 and safe_read(function () return AshitaCore:GetMemoryManager():GetPlayer(); end, nil) or nil;
     local hp_pct = safe_read(function () return party:GetMemberHPPercent(index); end, nil);
     local mp_pct = safe_read(function () return party:GetMemberMPPercent(index); end, nil);
     local hp = resource_current_value(safe_read(function () return party:GetMemberHP(index); end, nil));
     local mp = resource_current_value(safe_read(function () return party:GetMemberMP(index); end, nil));
-    local player = index == 0 and safe_read(function () return AshitaCore:GetMemoryManager():GetPlayer(); end, nil) or nil;
-    local hp_max = player ~= nil and resource_current_value(safe_read(function () return player:GetHPMax(); end, nil)) or estimate_resource_max(hp, hp_pct);
-    local mp_max = player ~= nil and resource_current_value(safe_read(function () return player:GetMPMax(); end, nil)) or estimate_resource_max(mp, mp_pct);
+    local hp_max = nil;
+    local mp_max = nil;
+
+    if (player ~= nil) then
+        hp = resource_current_value(safe_read(function () return player:GetHP(); end, nil)) or hp;
+        mp = resource_current_value(safe_read(function () return player:GetMP(); end, nil)) or mp;
+        hp_max = resource_current_value(safe_read(function () return player:GetHPMax(); end, nil));
+        mp_max = resource_current_value(safe_read(function () return player:GetMPMax(); end, nil));
+        hp_pct = percent_value(safe_read(function () return player:GetHPP(); end, nil)) or resource_percent_from_pair(hp, hp_max) or hp_pct;
+        mp_pct = percent_value(safe_read(function () return player:GetMPP(); end, nil)) or resource_percent_from_pair(mp, mp_max) or mp_pct;
+    end
+
+    hp_max = hp_max or estimate_resource_max(hp, hp_pct);
+    mp_max = mp_max or estimate_resource_max(mp, mp_pct);
 
     return {
         kind = 'party',
