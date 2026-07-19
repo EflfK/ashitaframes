@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.26';
+addon.version   = '0.3.27';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -59,6 +59,7 @@ local DEFAULT_SETTINGS = {
     show_percent = true,
     show_mp = true,
     show_tp = true,
+    show_cast = true,
     show_buffs = true,
     show_buff_reminders = true,
     show_target_debuffs = true,
@@ -67,6 +68,9 @@ local DEFAULT_SETTINGS = {
     buff_reminder_suppressed_zone_ids = { },
     max_buffs = 8,
     party_preview_size = 6,
+    mp_text_threshold = 1,
+    tp_text_threshold = 1000,
+    cast_text_threshold = 1,
     self_window_x = 36,
     self_window_y = 164,
     party_window_x = 36,
@@ -87,8 +91,10 @@ local DEFAULT_SETTINGS = {
     self_opacity = -1,
     self_show_mp = 'default',
     self_show_tp = 'default',
+    self_show_cast = 'default',
     self_mp_text_threshold = -1,
     self_tp_text_threshold = -1,
+    self_cast_text_threshold = -1,
     party_frame_width = -1,
     party_height = -1,
     party_row_height = -1,
@@ -96,8 +102,10 @@ local DEFAULT_SETTINGS = {
     party_opacity = -1,
     party_show_mp = 'default',
     party_show_tp = 'default',
+    party_show_cast = 'default',
     party_mp_text_threshold = -1,
     party_tp_text_threshold = -1,
+    party_cast_text_threshold = -1,
     party_size_layouts = { },
     pet_frame_width = -1,
     pet_height = -1,
@@ -106,8 +114,10 @@ local DEFAULT_SETTINGS = {
     pet_opacity = -1,
     pet_show_mp = 'default',
     pet_show_tp = 'default',
+    pet_show_cast = 'default',
     pet_mp_text_threshold = -1,
     pet_tp_text_threshold = -1,
+    pet_cast_text_threshold = -1,
     target_frame_width = -1,
     target_height = -1,
     target_row_height = -1,
@@ -115,8 +125,10 @@ local DEFAULT_SETTINGS = {
     target_opacity = -1,
     target_show_mp = false,
     target_show_tp = false,
+    target_show_cast = 'default',
     target_mp_text_threshold = -1,
     target_tp_text_threshold = -1,
+    target_cast_text_threshold = -1,
     buff_reminders = {
         default = {
             enabled = true,
@@ -152,6 +164,7 @@ local COLORS = {
     hp_low = { 0.92, 0.30, 0.22, 0.92 },
     mp = { 0.28, 0.52, 0.98, 0.82 },
     tp = { 0.96, 0.78, 0.26, 0.86 },
+    cast = { 0.42, 0.82, 0.94, 0.92 },
     bar_empty = { 0.08, 0.08, 0.08, 0.78 },
     text = { 0.94, 0.91, 0.82, 1.00 },
     text_muted = { 0.66, 0.66, 0.68, 0.92 },
@@ -288,6 +301,8 @@ local LIMITS = {
     mp_text_threshold_max = 100,
     tp_text_threshold_min = 0,
     tp_text_threshold_max = 3000,
+    cast_text_threshold_min = 0,
+    cast_text_threshold_max = 100,
     opacity_min = 35,
     opacity_max = 100,
 };
@@ -308,6 +323,10 @@ local state = {
     observed_target_debuffs = { },
     observed_target_debuff_names = { },
     pending_target_debuff_cast = nil,
+    active_casts_by_id = { },
+    active_casts_by_name = { },
+    cast_events = 0,
+    suppress_cast_tracking = false,
     observed_buff_zone_id = nil,
     observed_text_events = 0,
     observed_log_path = nil,
@@ -418,12 +437,23 @@ function normalize_tp_text_threshold(value, fallback)
     return clamp_int(value, LIMITS.tp_text_threshold_min, LIMITS.tp_text_threshold_max);
 end
 
+function normalize_cast_text_threshold(value, fallback)
+    value = tonumber(value);
+    if (value == nil or value < 0) then
+        value = fallback;
+    end
+
+    return clamp_int(value, LIMITS.cast_text_threshold_min, LIMITS.cast_text_threshold_max);
+end
+
 function apply_frame_bar_options(layout, kind)
     layout.kind = kind;
     layout.show_mp = state.settings[('%s_show_mp'):fmt(kind)] == true;
     layout.show_tp = state.settings[('%s_show_tp'):fmt(kind)] == true;
+    layout.show_cast = state.settings[('%s_show_cast'):fmt(kind)] == true;
     layout.mp_text_threshold = state.settings[('%s_mp_text_threshold'):fmt(kind)] or state.settings.mp_text_threshold;
     layout.tp_text_threshold = state.settings[('%s_tp_text_threshold'):fmt(kind)] or state.settings.tp_text_threshold;
+    layout.cast_text_threshold = state.settings[('%s_cast_text_threshold'):fmt(kind)] or state.settings.cast_text_threshold;
 
     return layout;
 end
@@ -864,6 +894,7 @@ local function normalize_settings(settings)
     settings.show_percent = settings.show_percent ~= false;
     settings.show_mp = settings.show_mp ~= false;
     settings.show_tp = settings.show_tp ~= false;
+    settings.show_cast = settings.show_cast ~= false;
     settings.show_buffs = settings.show_buffs ~= false;
     settings.show_buff_reminders = settings.show_buff_reminders ~= false;
     settings.show_target_debuffs = settings.show_target_debuffs ~= false;
@@ -886,6 +917,7 @@ local function normalize_settings(settings)
     settings.party_preview_size = party_size(settings.party_preview_size);
     settings.mp_text_threshold = normalize_mp_text_threshold(settings.mp_text_threshold, 1);
     settings.tp_text_threshold = normalize_tp_text_threshold(settings.tp_text_threshold, 1000);
+    settings.cast_text_threshold = normalize_cast_text_threshold(settings.cast_text_threshold, 1);
     settings.opacity = clamp_int(settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max);
     settings.self_frame_width = normalize_frame_width(settings.self_frame_width, settings.frame_width);
     settings.self_row_height = normalize_frame_row_height(settings.self_height or settings.self_row_height, settings.row_height);
@@ -894,8 +926,10 @@ local function normalize_settings(settings)
     settings.self_opacity = normalize_frame_opacity(settings.self_opacity, settings.opacity);
     settings.self_show_mp = normalize_frame_bar_enabled(settings.self_show_mp, settings.show_mp);
     settings.self_show_tp = normalize_frame_bar_enabled(settings.self_show_tp, settings.show_tp);
+    settings.self_show_cast = normalize_frame_bar_enabled(settings.self_show_cast, settings.show_cast);
     settings.self_mp_text_threshold = normalize_mp_text_threshold(settings.self_mp_text_threshold, settings.mp_text_threshold);
     settings.self_tp_text_threshold = normalize_tp_text_threshold(settings.self_tp_text_threshold, settings.tp_text_threshold);
+    settings.self_cast_text_threshold = normalize_cast_text_threshold(settings.self_cast_text_threshold, settings.cast_text_threshold);
     settings.party_frame_width = normalize_frame_width(settings.party_frame_width, settings.frame_width);
     settings.party_row_height = normalize_frame_row_height(settings.party_height or settings.party_row_height, settings.row_height);
     settings.party_height = settings.party_row_height;
@@ -903,8 +937,10 @@ local function normalize_settings(settings)
     settings.party_opacity = normalize_frame_opacity(settings.party_opacity, settings.opacity);
     settings.party_show_mp = normalize_frame_bar_enabled(settings.party_show_mp, settings.show_mp);
     settings.party_show_tp = normalize_frame_bar_enabled(settings.party_show_tp, settings.show_tp);
+    settings.party_show_cast = normalize_frame_bar_enabled(settings.party_show_cast, settings.show_cast);
     settings.party_mp_text_threshold = normalize_mp_text_threshold(settings.party_mp_text_threshold, settings.mp_text_threshold);
     settings.party_tp_text_threshold = normalize_tp_text_threshold(settings.party_tp_text_threshold, settings.tp_text_threshold);
+    settings.party_cast_text_threshold = normalize_cast_text_threshold(settings.party_cast_text_threshold, settings.cast_text_threshold);
     settings.party_size_layouts = normalize_party_size_layouts(settings.party_size_layouts, settings);
     settings.pet_frame_width = normalize_frame_width(settings.pet_frame_width, settings.frame_width);
     settings.pet_row_height = normalize_frame_row_height(settings.pet_height or settings.pet_row_height, settings.row_height);
@@ -913,8 +949,10 @@ local function normalize_settings(settings)
     settings.pet_opacity = normalize_frame_opacity(settings.pet_opacity, settings.opacity);
     settings.pet_show_mp = normalize_frame_bar_enabled(settings.pet_show_mp, settings.show_mp);
     settings.pet_show_tp = normalize_frame_bar_enabled(settings.pet_show_tp, settings.show_tp);
+    settings.pet_show_cast = normalize_frame_bar_enabled(settings.pet_show_cast, settings.show_cast);
     settings.pet_mp_text_threshold = normalize_mp_text_threshold(settings.pet_mp_text_threshold, settings.mp_text_threshold);
     settings.pet_tp_text_threshold = normalize_tp_text_threshold(settings.pet_tp_text_threshold, settings.tp_text_threshold);
+    settings.pet_cast_text_threshold = normalize_cast_text_threshold(settings.pet_cast_text_threshold, settings.cast_text_threshold);
     settings.target_frame_width = normalize_frame_width(settings.target_frame_width, settings.frame_width);
     settings.target_row_height = normalize_frame_row_height(settings.target_height or settings.target_row_height, settings.row_height);
     settings.target_height = settings.target_row_height;
@@ -922,8 +960,10 @@ local function normalize_settings(settings)
     settings.target_opacity = normalize_frame_opacity(settings.target_opacity, settings.opacity);
     settings.target_show_mp = normalize_frame_bar_enabled(settings.target_show_mp, false);
     settings.target_show_tp = normalize_frame_bar_enabled(settings.target_show_tp, false);
+    settings.target_show_cast = normalize_frame_bar_enabled(settings.target_show_cast, settings.show_cast);
     settings.target_mp_text_threshold = normalize_mp_text_threshold(settings.target_mp_text_threshold, settings.mp_text_threshold);
     settings.target_tp_text_threshold = normalize_tp_text_threshold(settings.target_tp_text_threshold, settings.tp_text_threshold);
+    settings.target_cast_text_threshold = normalize_cast_text_threshold(settings.target_cast_text_threshold, settings.cast_text_threshold);
     settings.buff_reminders = normalize_buff_reminders(settings.buff_reminders);
     settings.target_debuff_reminders = normalize_target_debuff_reminders(settings.target_debuff_reminders);
     settings.buff_reminder_suppressed_zone_ids = normalize_zone_id_list(settings.buff_reminder_suppressed_zone_ids);
@@ -1346,6 +1386,7 @@ local function sync_observed_buffs_for_party(party, self_zone)
         if (state.observed_buff_zone_id ~= nil and state.observed_buff_zone_id ~= zone_id) then
             clear_observed_buffs();
             clear_observed_target_debuffs();
+            clear_active_casts();
         end
         state.observed_buff_zone_id = zone_id;
     end
@@ -2353,6 +2394,7 @@ local function config_text_from_settings(settings)
         ('        show_percent = %s,'):fmt(bool_text(settings.show_percent)),
         ('        show_mp = %s,'):fmt(bool_text(settings.show_mp)),
         ('        show_tp = %s,'):fmt(bool_text(settings.show_tp)),
+        ('        show_cast = %s,'):fmt(bool_text(settings.show_cast)),
         ('        show_buffs = %s,'):fmt(bool_text(settings.show_buffs)),
         ('        show_buff_reminders = %s,'):fmt(bool_text(settings.show_buff_reminders)),
         ('        show_target_debuffs = %s,'):fmt(bool_text(settings.show_target_debuffs)),
@@ -2363,6 +2405,7 @@ local function config_text_from_settings(settings)
         ('        party_preview_size = %d,'):fmt(settings.party_preview_size),
         ('        mp_text_threshold = %d,'):fmt(settings.mp_text_threshold),
         ('        tp_text_threshold = %d,'):fmt(settings.tp_text_threshold),
+        ('        cast_text_threshold = %d,'):fmt(settings.cast_text_threshold),
         '',
         ('        self_window_x = %d,'):fmt(state.self_window_x),
         ('        self_window_y = %d,'):fmt(state.self_window_y),
@@ -2386,8 +2429,10 @@ local function config_text_from_settings(settings)
         ('        self_opacity = %d,'):fmt(settings.self_opacity),
         ('        self_show_mp = %s,'):fmt(bool_text(settings.self_show_mp)),
         ('        self_show_tp = %s,'):fmt(bool_text(settings.self_show_tp)),
+        ('        self_show_cast = %s,'):fmt(bool_text(settings.self_show_cast)),
         ('        self_mp_text_threshold = %d,'):fmt(settings.self_mp_text_threshold),
         ('        self_tp_text_threshold = %d,'):fmt(settings.self_tp_text_threshold),
+        ('        self_cast_text_threshold = %d,'):fmt(settings.self_cast_text_threshold),
         ('        party_frame_width = %d,'):fmt(settings.party_frame_width),
         ('        party_height = %d,'):fmt(settings.party_height),
         ('        party_row_height = %d,'):fmt(settings.party_row_height),
@@ -2395,8 +2440,10 @@ local function config_text_from_settings(settings)
         ('        party_opacity = %d,'):fmt(settings.party_opacity),
         ('        party_show_mp = %s,'):fmt(bool_text(settings.party_show_mp)),
         ('        party_show_tp = %s,'):fmt(bool_text(settings.party_show_tp)),
+        ('        party_show_cast = %s,'):fmt(bool_text(settings.party_show_cast)),
         ('        party_mp_text_threshold = %d,'):fmt(settings.party_mp_text_threshold),
         ('        party_tp_text_threshold = %d,'):fmt(settings.party_tp_text_threshold),
+        ('        party_cast_text_threshold = %d,'):fmt(settings.party_cast_text_threshold),
         '        party_size_layouts = {',
     };
 
@@ -2415,8 +2462,10 @@ local function config_text_from_settings(settings)
         ('        pet_opacity = %d,'):fmt(settings.pet_opacity),
         ('        pet_show_mp = %s,'):fmt(bool_text(settings.pet_show_mp)),
         ('        pet_show_tp = %s,'):fmt(bool_text(settings.pet_show_tp)),
+        ('        pet_show_cast = %s,'):fmt(bool_text(settings.pet_show_cast)),
         ('        pet_mp_text_threshold = %d,'):fmt(settings.pet_mp_text_threshold),
         ('        pet_tp_text_threshold = %d,'):fmt(settings.pet_tp_text_threshold),
+        ('        pet_cast_text_threshold = %d,'):fmt(settings.pet_cast_text_threshold),
         ('        target_frame_width = %d,'):fmt(settings.target_frame_width),
         ('        target_height = %d,'):fmt(settings.target_height),
         ('        target_row_height = %d,'):fmt(settings.target_row_height),
@@ -2424,8 +2473,10 @@ local function config_text_from_settings(settings)
         ('        target_opacity = %d,'):fmt(settings.target_opacity),
         ('        target_show_mp = %s,'):fmt(bool_text(settings.target_show_mp)),
         ('        target_show_tp = %s,'):fmt(bool_text(settings.target_show_tp)),
+        ('        target_show_cast = %s,'):fmt(bool_text(settings.target_show_cast)),
         ('        target_mp_text_threshold = %d,'):fmt(settings.target_mp_text_threshold),
         ('        target_tp_text_threshold = %d,'):fmt(settings.target_tp_text_threshold),
+        ('        target_cast_text_threshold = %d,'):fmt(settings.target_cast_text_threshold),
         '',
         '        buff_reminders = {',
     };
@@ -2471,6 +2522,306 @@ local function save_config()
     return true, ('Saved %s.'):fmt(path);
 end
 
+function cast_name_key(name)
+    return observed_name_key(name);
+end
+
+function entity_name_by_server_id(server_id)
+    server_id = tonumber(server_id);
+    if (server_id == nil or server_id == 0) then
+        return '';
+    end
+
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    local entity = memory ~= nil and safe_read(function () return memory:GetEntity(); end, nil) or nil;
+    if (entity == nil) then
+        return '';
+    end
+
+    local scan_max = math.min(tonumber(safe_read(function () return entity:GetEntityMapSize(); end, 0x8FF)) or 0x8FF, 0x8FF);
+    for index = 0, scan_max, 1 do
+        local candidate_id = tonumber(safe_read(function () return entity:GetServerId(index); end, 0));
+        if (candidate_id == server_id) then
+            return clean_string(safe_read(function () return entity:GetName(index); end, ''));
+        end
+    end
+
+    return '';
+end
+
+function cast_resource_name(resource)
+    if (resource == nil) then
+        return '';
+    end
+
+    local name = safe_read(function () return resource.Name; end, nil);
+    if (type(name) == 'table') then
+        return clean_string(name[1] or name[0] or name.en or name.English or '');
+    end
+
+    return clean_string(name);
+end
+
+function cast_resource_id(resource)
+    if (resource == nil) then
+        return nil;
+    end
+
+    return tonumber(safe_read(function () return resource.Index; end, safe_read(function () return resource.Id; end, nil)));
+end
+
+function cast_duration_from_resource(resource)
+    if (resource == nil) then
+        return 3.0;
+    end
+
+    local cast_time = tonumber(safe_read(function () return resource.CastTime; end, nil));
+    if (cast_time == nil) then
+        return 3.0;
+    end
+
+    return clamp(cast_time * 0.25, 0.5, 60.0);
+end
+
+function spell_cast_info_by_id(spell_id_value)
+    spell_id_value = tonumber(spell_id_value);
+    if (spell_id_value == nil or spell_id_value <= 0) then
+        return nil;
+    end
+
+    local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
+    local spell = resources ~= nil and safe_read(function () return resources:GetSpellById(spell_id_value); end, nil) or nil;
+    if (spell == nil) then
+        return nil;
+    end
+
+    return {
+        id = cast_resource_id(spell) or spell_id_value,
+        kind = 'spell',
+        label = cast_resource_name(spell),
+        duration = cast_duration_from_resource(spell),
+    };
+end
+
+function item_cast_info_by_id(item_id)
+    item_id = tonumber(item_id);
+    if (item_id == nil or item_id <= 0) then
+        return nil;
+    end
+
+    local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
+    local item = resources ~= nil and safe_read(function () return resources:GetItemById(item_id); end, nil) or nil;
+    if (item == nil) then
+        return nil;
+    end
+
+    return {
+        id = cast_resource_id(item) or item_id,
+        kind = 'item',
+        label = cast_resource_name(item),
+        duration = cast_duration_from_resource(item),
+    };
+end
+
+function spell_cast_info_by_name(spell_name)
+    spell_name = clean_string(spell_name);
+    if (#spell_name == 0) then
+        return nil;
+    end
+
+    local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
+    local spell = resources ~= nil and safe_read(function () return resources:GetSpellByName(spell_name, 0); end, nil) or nil;
+    if (spell == nil) then
+        return {
+            id = nil,
+            kind = 'spell',
+            label = spell_name,
+            duration = 3.0,
+        };
+    end
+
+    return {
+        id = spell_id(spell),
+        kind = 'spell',
+        label = cast_resource_name(spell),
+        duration = cast_duration_from_resource(spell),
+    };
+end
+
+function normalize_cast_actor_name(actor_name, actor_id)
+    local name = clean_string(actor_name);
+    if ((name == '' or name == 'You') and tonumber(actor_id) ~= nil) then
+        local entity_name = entity_name_by_server_id(actor_id);
+        if (#entity_name > 0) then
+            name = entity_name;
+        end
+    end
+    if (name == 'You') then
+        local player_name = current_player_name();
+        if (#player_name > 0) then
+            name = player_name;
+        end
+    end
+
+    return name;
+end
+
+function set_active_cast(actor_id, actor_name, label, duration, kind, resource_id)
+    actor_id = tonumber(actor_id);
+    actor_name = normalize_cast_actor_name(actor_name, actor_id);
+    local name_key = cast_name_key(actor_name);
+    if ((actor_id == nil or actor_id == 0) and name_key == nil) then
+        return false;
+    end
+
+    local cast = {
+        server_id = actor_id,
+        name = actor_name,
+        name_key = name_key,
+        label = clean_string(label),
+        started_at = os.clock(),
+        duration = clamp(tonumber(duration) or 3.0, 0.5, 60.0),
+        kind = clean_string(kind),
+        resource_id = tonumber(resource_id),
+    };
+
+    if (#cast.label == 0) then
+        cast.label = 'Casting';
+    end
+
+    if (actor_id ~= nil and actor_id ~= 0) then
+        state.active_casts_by_id[actor_id] = cast;
+    end
+    if (name_key ~= nil) then
+        state.active_casts_by_name[name_key] = cast;
+    end
+
+    state.cast_events = state.cast_events + 1;
+    return true;
+end
+
+function clear_active_cast(actor_id, actor_name)
+    actor_id = tonumber(actor_id);
+    if (actor_id ~= nil and actor_id ~= 0) then
+        local cast = state.active_casts_by_id[actor_id];
+        if (type(cast) == 'table' and cast.name_key ~= nil) then
+            state.active_casts_by_name[cast.name_key] = nil;
+        end
+        state.active_casts_by_id[actor_id] = nil;
+    end
+
+    local name_key = cast_name_key(normalize_cast_actor_name(actor_name, actor_id));
+    if (name_key ~= nil) then
+        state.active_casts_by_name[name_key] = nil;
+    end
+end
+
+function clear_active_casts()
+    state.active_casts_by_id = { };
+    state.active_casts_by_name = { };
+end
+
+function cast_progress_percent(cast)
+    if (type(cast) ~= 'table') then
+        return nil;
+    end
+
+    local duration = tonumber(cast.duration) or 0;
+    if (duration <= 0) then
+        return nil;
+    end
+
+    return clamp(((os.clock() - (tonumber(cast.started_at) or 0)) / duration) * 100, 0, 100);
+end
+
+function active_cast_current(cast)
+    local percent = cast_progress_percent(cast);
+    if (percent == nil or percent >= 100) then
+        return nil;
+    end
+
+    return {
+        label = clean_string(cast.label),
+        percent = percent,
+        duration = cast.duration,
+        kind = cast.kind,
+        resource_id = cast.resource_id,
+    };
+end
+
+function self_castbar_percent()
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    local cast_bar = memory ~= nil and safe_read(function () return memory:GetCastBar(); end, nil) or nil;
+    local percent = cast_bar ~= nil and tonumber(safe_read(function () return cast_bar:GetPercent(); end, nil)) or nil;
+    if (percent == nil) then
+        return nil;
+    end
+    if (percent > 0 and percent <= 1) then
+        percent = percent * 100;
+    end
+
+    percent = percent_value(percent);
+    if (percent == nil or percent <= 0 or percent >= 100) then
+        return nil;
+    end
+
+    return percent;
+end
+
+function active_cast_lookup(server_id, name)
+    local id = tonumber(server_id);
+    if (id ~= nil and id ~= 0 and state.active_casts_by_id[id] ~= nil) then
+        return state.active_casts_by_id[id];
+    end
+
+    local name_key = cast_name_key(name);
+    if (name_key ~= nil) then
+        return state.active_casts_by_name[name_key];
+    end
+
+    return nil;
+end
+
+function active_cast_for_unit(server_id, name, is_self)
+    local cast = active_cast_lookup(server_id, name);
+    local current = cast ~= nil and active_cast_current(cast) or nil;
+
+    if (current == nil and cast ~= nil) then
+        clear_active_cast(server_id, name);
+    end
+
+    if (is_self == true) then
+        local percent = self_castbar_percent();
+        if (percent ~= nil) then
+            return {
+                label = current ~= nil and current.label or 'Casting',
+                percent = percent,
+                duration = current ~= nil and current.duration or nil,
+                kind = current ~= nil and current.kind or 'spell',
+                resource_id = current ~= nil and current.resource_id or nil,
+            };
+        end
+    end
+
+    return current;
+end
+
+function prune_active_casts()
+    local now = os.clock();
+
+    for actor_id, cast in pairs(state.active_casts_by_id) do
+        if (type(cast) ~= 'table' or (now - (tonumber(cast.started_at) or 0)) > ((tonumber(cast.duration) or 0) + 1.5)) then
+            state.active_casts_by_id[actor_id] = nil;
+        end
+    end
+
+    for name_key, cast in pairs(state.active_casts_by_name) do
+        if (type(cast) ~= 'table' or (now - (tonumber(cast.started_at) or 0)) > ((tonumber(cast.duration) or 0) + 1.5)) then
+            state.active_casts_by_name[name_key] = nil;
+        end
+    end
+end
+
 local function party_member_unit(party, index, self_zone, reminder_job, reminders_suppressed)
     local active = truthy(safe_read(function () return party:GetMemberIsActive(index); end, false));
     local name = clean_string(safe_read(function () return party:GetMemberName(index); end, ''));
@@ -2502,6 +2853,7 @@ local function party_member_unit(party, index, self_zone, reminder_job, reminder
         kind = 'party',
         tag = tag,
         index = index,
+        server_id = server_id,
         name = #name > 0 and name or ('Slot %d'):fmt(index + 1),
         category = category,
         reminder_job = reminder_job,
@@ -2518,6 +2870,7 @@ local function party_member_unit(party, index, self_zone, reminder_job, reminder
             safe_read(function () return party:GetMemberMainJobLevel(index); end, nil),
             safe_read(function () return party:GetMemberSubJob(index); end, nil),
             safe_read(function () return party:GetMemberSubJobLevel(index); end, nil)),
+        cast = active_cast_for_unit(server_id, name, index == 0),
         buffs = party_member_buffs(party, index, server_id, same_zone, name),
         same_zone = same_zone,
         dim = state.settings.same_zone_dim and not same_zone,
@@ -2590,6 +2943,7 @@ function party_preview_unit(index)
         mp_pct = math.max(34, 92 - (index * 8)),
         tp = index * 230,
         job = ({ 'WAR30/MNK15', 'WHM30/BLM15', 'SAM30/WAR15', 'BRD30/WHM15', 'RDM30/WHM15' })[index] or '',
+        cast = index == 2 and { label = 'Cure II', percent = 46, duration = 3.0, kind = 'spell' } or nil,
         buffs = index == 1 and { 40, 41 } or { 40 },
         same_zone = true,
         dim = false,
@@ -2678,6 +3032,7 @@ local function collect_target_unit()
         distance = entity_distance(entity, active_index),
         job = '',
         reminder_job = current_player_job_key(),
+        cast = active_cast_for_unit(server_id, name, false),
         debuffs = observed_target_debuffs_for_unit(server_id, name),
         same_zone = true,
         dim = false,
@@ -2724,6 +3079,7 @@ function collect_pet_unit()
         tp = player ~= nil and safe_read(function () return player:GetPetTP(); end, nil) or nil,
         distance = distance,
         job = '',
+        cast = active_cast_for_unit(safe_read(function () return pet.ServerId; end, nil), name, false),
         buffs = { },
         debuffs = { },
         same_zone = true,
@@ -2831,6 +3187,10 @@ function unit_has_tp(unit)
     return tonumber(unit.tp) ~= nil;
 end
 
+function unit_has_cast(unit)
+    return type(unit.cast) == 'table' and percent_value(unit.cast.percent) ~= nil;
+end
+
 function mp_status_text(unit, layout)
     if (layout.show_mp ~= true or not unit_has_mp(unit)) then
         return nil;
@@ -2860,6 +3220,24 @@ function tp_status_text(unit, layout)
     end
 
     return ('%dTP'):fmt(numeric);
+end
+
+function cast_status_text(unit, layout)
+    if (layout.show_cast ~= true or not unit_has_cast(unit)) then
+        return nil;
+    end
+
+    local percent = percent_value(unit.cast.percent);
+    if (percent == nil or percent < layout.cast_text_threshold) then
+        return nil;
+    end
+
+    local label = clean_string(unit.cast.label);
+    if (#label == 0) then
+        label = 'Casting';
+    end
+
+    return ('%s %d%%'):fmt(label, math.floor(percent + 0.5));
 end
 
 local function unit_right_label(unit)
@@ -3002,6 +3380,15 @@ function draw_resource_labels(draw_list, unit, layout, x, y, width, alpha)
 
     local label_x = x;
     local max_label_x = hp_x - 8;
+    local cast_text = cast_status_text(unit, layout);
+    if (cast_text ~= nil) then
+        local cast_width = calc_text_width(cast_text);
+        if ((label_x + cast_width) < max_label_x) then
+            draw_text(draw_list, label_x, y, COLORS.cast, cast_text);
+            label_x = label_x + cast_width + 8;
+        end
+    end
+
     local mp_text = mp_status_text(unit, layout);
     if (mp_text ~= nil) then
         local mp_width = calc_text_width(mp_text);
@@ -3022,6 +3409,12 @@ end
 
 function draw_resource_bars(draw_list, unit, layout, x, y, width, height, hp_color, alpha)
     draw_bar(draw_list, x, y, width, height, unit.hp_pct, hp_color, alpha);
+
+    if (layout.show_cast == true and unit_has_cast(unit)) then
+        local cast_h = math.min(4, height);
+        draw_list:AddRectFilled({ x, y }, { x + width, y + cast_h }, color_u32(apply_alpha(COLORS.bar_empty, alpha * 0.82)), 1.0);
+        draw_bar_fill(draw_list, x, y, width, cast_h, unit.cast.percent, COLORS.cast, alpha, 1.0);
+    end
 
     local bottom_y = y + height;
     if (layout.show_tp == true and unit_has_tp(unit)) then
@@ -3321,8 +3714,10 @@ end
 function render_frame_bar_controls(kind, label)
     local show_mp_field = ('%s_show_mp'):fmt(kind);
     local show_tp_field = ('%s_show_tp'):fmt(kind);
+    local show_cast_field = ('%s_show_cast'):fmt(kind);
     local mp_threshold_field = ('%s_mp_text_threshold'):fmt(kind);
     local tp_threshold_field = ('%s_tp_text_threshold'):fmt(kind);
+    local cast_threshold_field = ('%s_cast_text_threshold'):fmt(kind);
 
     imgui.TextColored(COLORS.accent, label);
 
@@ -3345,6 +3740,16 @@ function render_frame_bar_controls(kind, label)
         state.settings[tp_threshold_field] = normalize_tp_text_threshold(value, state.settings.tp_text_threshold);
         mark_config_changed();
     end, 'TP');
+
+    local show_cast = state.settings[show_cast_field] == true;
+    if (imgui.Checkbox(('Show Cast Bar##ashitaframes_%s_show_cast'):fmt(kind), { show_cast })) then
+        state.settings[show_cast_field] = not show_cast;
+        mark_config_changed();
+    end
+    render_int_control('Cast Text At', ('%s_cast_text_threshold'):fmt(kind), state.settings[cast_threshold_field], LIMITS.cast_text_threshold_min, LIMITS.cast_text_threshold_max, function (value)
+        state.settings[cast_threshold_field] = normalize_cast_text_threshold(value, state.settings.cast_text_threshold);
+        mark_config_changed();
+    end, '%');
 end
 
 function render_party_size_layout_controls()
@@ -3796,7 +4201,7 @@ local function print_status()
     local status_party_size = party_size(state.settings.party_preview_size);
     local status_party_layout = party_layout_for_size(status_party_size);
 
-    log_info(('visible=%s locked=%s self=%s target=%s party=%s pet=%s alliance=%s buffs=%s reminders=%s targetDebuffs=%s targetDebuffReminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d self=(%d,%d %dx%d gap=%d op=%d) partySize=%d party=(%d,%d %dx%d gap=%d op=%d cols=%d rows=%d) pet=(%d,%d %dx%d gap=%d op=%d) target=(%d,%d %dx%d gap=%d op=%d)'):fmt(
+    log_info(('visible=%s locked=%s self=%s target=%s party=%s pet=%s alliance=%s buffs=%s reminders=%s targetDebuffs=%s targetDebuffReminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d castEvents=%d maxBuffs=%d self=(%d,%d %dx%d gap=%d op=%d) partySize=%d party=(%d,%d %dx%d gap=%d op=%d cols=%d rows=%d) pet=(%d,%d %dx%d gap=%d op=%d) target=(%d,%d %dx%d gap=%d op=%d)'):fmt(
         tostring(state.visible[1] == true),
         tostring(state.settings.locked == true),
         tostring(state.settings.show_self == true),
@@ -3813,6 +4218,7 @@ local function print_status()
         observed_buff_summary(),
         state.observed_text_events,
         state.observed_log_events,
+        state.cast_events,
         state.settings.max_buffs,
         state.self_window_x,
         state.self_window_y,
@@ -4061,6 +4467,47 @@ local function parse_action_packet(data)
     return action;
 end
 
+function action_first_target_param(action)
+    if (type(action) ~= 'table') then
+        return nil;
+    end
+
+    for _, target in ipairs(action.targets or { }) do
+        for _, target_action in ipairs(target.actions or { }) do
+            local param = tonumber(target_action.param);
+            if (param ~= nil and param > 0) then
+                return param;
+            end
+        end
+    end
+
+    return nil;
+end
+
+function handle_cast_action_packet(data)
+    local action = parse_action_packet(data);
+    if (action == nil) then
+        return;
+    end
+
+    local action_type = tonumber(action.action_type);
+    local actor_id = tonumber(action.actor_id);
+    if ((action_type == 8 or action_type == 9) and tonumber(action.param) == 0x6163) then
+        local resource_id = action_first_target_param(action);
+        local info = action_type == 8 and spell_cast_info_by_id(resource_id) or item_cast_info_by_id(resource_id);
+        if (info ~= nil) then
+            set_active_cast(actor_id, entity_name_by_server_id(actor_id), info.label, info.duration, info.kind, info.id);
+        else
+            set_active_cast(actor_id, entity_name_by_server_id(actor_id), 'Casting', 3.0, action_type == 8 and 'spell' or 'item', resource_id);
+        end
+        return;
+    end
+
+    if (actor_id ~= nil and state.active_casts_by_id[actor_id] ~= nil and action_type ~= 8 and action_type ~= 9) then
+        clear_active_cast(actor_id, nil);
+    end
+end
+
 local function handle_target_debuff_action_packet(data)
     local action = parse_action_packet(data);
     local player_id = local_player_server_id();
@@ -4113,11 +4560,13 @@ local function handle_incoming_packet(e)
     end
 
     if (e.id == 0x028) then
+        handle_cast_action_packet(e.data_modified or e.data);
         handle_target_debuff_action_packet(e.data_modified or e.data);
     elseif (e.id == 0x029) then
         handle_target_debuff_message_packet(e.data_modified or e.data);
     elseif (e.id == 0x00A) then
         clear_observed_target_debuffs();
+        clear_active_casts();
     end
 end
 
@@ -4414,9 +4863,56 @@ function process_observed_target_debuff_text(message)
     return false;
 end
 
+function process_observed_cast_text(message)
+    if (state.suppress_cast_tracking == true) then
+        return false;
+    end
+
+    local text = clean_event_message(message);
+    if (#text == 0) then
+        return false;
+    end
+
+    local actor, spell, target = text:match('^(.-) starts casting (.-) on (.-)%.$');
+    if (actor == nil or spell == nil) then
+        actor, spell = text:match('^(.-) starts casting (.-)%.$');
+    end
+    if (actor ~= nil and spell ~= nil) then
+        local info = spell_cast_info_by_name(spell);
+        if (info ~= nil) then
+            return set_active_cast(nil, actor, info.label, info.duration, info.kind, info.id);
+        end
+
+        return set_active_cast(nil, actor, spell, 3.0, 'spell', nil);
+    end
+
+    actor = text:match("^(.-)'s casting is interrupted%.$");
+    if (actor ~= nil) then
+        clear_active_cast(nil, actor);
+        return true;
+    end
+    if (text == 'Your casting is interrupted.') then
+        clear_active_cast(local_player_server_id(), current_player_name());
+        return true;
+    end
+
+    actor, spell, target = text:match('^(.-) casts (.-) on (.-)%.$');
+    if (actor == nil or spell == nil) then
+        actor, spell = text:match('^(.-) casts (.-)%.$');
+    end
+    if (actor ~= nil and spell ~= nil) then
+        clear_active_cast(nil, actor);
+        return true;
+    end
+
+    return false;
+end
+
 function process_observed_text(message)
-    local handled = process_observed_buff_text(message);
-    return process_observed_target_debuff_text(message) or handled;
+    local handled_buff = process_observed_buff_text(message);
+    local handled_debuff = process_observed_target_debuff_text(message);
+    local handled_cast = process_observed_cast_text(message);
+    return handled_buff or handled_debuff or handled_cast;
 end
 
 local function current_chat_log_path()
@@ -4464,9 +4960,11 @@ local function seed_observed_buffs_from_chat_log()
         end
     end
 
+    state.suppress_cast_tracking = true;
     for index = start_index, #lines, 1 do
         process_observed_text(lines[index]);
     end
+    state.suppress_cast_tracking = false;
 
     state.observed_log_path = path;
     state.observed_log_position = position;
@@ -4619,6 +5117,7 @@ end);
 ashita.events.register('d3d_present', 'present_cb', function ()
     poll_observed_buffs_from_chat_log();
     prune_observed_target_debuffs();
+    prune_active_casts();
 
     if (not state.visible[1]) then
         render_config_window();
