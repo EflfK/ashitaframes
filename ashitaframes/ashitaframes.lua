@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.10';
+addon.version   = '0.3.23';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -48,8 +48,10 @@ local JOB_ORDER = {
 local DEFAULT_SETTINGS = {
     visible = true,
     locked = false,
+    show_self = true,
     show_target = true,
     show_party = true,
+    show_pet = true,
     show_alliance = false,
     show_empty_target = true,
     same_zone_dim = true,
@@ -58,17 +60,41 @@ local DEFAULT_SETTINGS = {
     show_tp = true,
     show_buffs = true,
     show_buff_reminders = true,
+    show_target_debuffs = true,
+    show_target_debuff_reminders = true,
     hide_buff_reminders_in_towns = true,
     buff_reminder_suppressed_zone_ids = { },
     max_buffs = 8,
+    party_preview_size = 6,
+    self_window_x = 36,
+    self_window_y = 164,
     party_window_x = 36,
     party_window_y = 362,
+    pet_window_x = 36,
+    pet_window_y = 230,
     target_window_x = 36,
     target_window_y = 296,
     frame_width = 232,
     row_height = 56,
     row_gap = 5,
     opacity = 88,
+    self_frame_width = -1,
+    self_row_height = -1,
+    self_row_gap = -1,
+    self_opacity = -1,
+    party_frame_width = -1,
+    party_row_height = -1,
+    party_row_gap = -1,
+    party_opacity = -1,
+    party_size_layouts = { },
+    pet_frame_width = -1,
+    pet_row_height = -1,
+    pet_row_gap = -1,
+    pet_opacity = -1,
+    target_frame_width = -1,
+    target_row_height = -1,
+    target_row_gap = -1,
+    target_opacity = -1,
     buff_reminders = {
         default = {
             enabled = true,
@@ -83,6 +109,12 @@ local DEFAULT_SETTINGS = {
             players = true,
             trusts = true,
             buffs = { 'protect' },
+        },
+    },
+    target_debuff_reminders = {
+        default = {
+            enabled = true,
+            debuffs = { 'dia', 'paralyze', 'slow' },
         },
     },
 };
@@ -113,6 +145,7 @@ local COLORS = {
 
 local BUFF_ICON_SIZE = 54;
 local BUFF_ICON_GAP = 6;
+local OBSERVED_LOG_SEED_MAX_LINES = 12000;
 local BUFF_ICON_FILES = {
     protect = 'protect_1.png',
     shell = 'shell_1.png',
@@ -121,6 +154,63 @@ local BUFF_DEFINITIONS = {
     protect = { id = 40, label = 'Protect', spell = 'Protect', file = BUFF_ICON_FILES.protect },
     shell = { id = 41, label = 'Shell', spell = 'Shell', file = BUFF_ICON_FILES.shell },
 };
+local TARGET_DEBUFF_DEFINITIONS = {
+    dia = {
+        id = 134,
+        label = 'Dia',
+        spell = 'Dia',
+        spell_ids = { 23, 24, 25, 26, 27, 33 },
+        duration_seconds = 60,
+    },
+    paralyze = {
+        id = 4,
+        label = 'Paralyze',
+        spell = 'Paralyze',
+        spell_ids = { 58, 80 },
+        duration_seconds = 120,
+    },
+    slow = {
+        id = 13,
+        label = 'Slow',
+        spell = 'Slow',
+        spell_ids = { 56, 79 },
+        duration_seconds = 180,
+    },
+};
+local TARGET_DEBUFF_SPELL_IDS = {
+    [23] = 'dia',
+    [24] = 'dia',
+    [25] = 'dia',
+    [26] = 'dia',
+    [27] = 'dia',
+    [33] = 'dia',
+    [58] = 'paralyze',
+    [80] = 'paralyze',
+    [56] = 'slow',
+    [79] = 'slow',
+};
+local TARGET_DEBUFF_SPELL_DURATIONS = {
+    [23] = 60,
+    [24] = 120,
+    [25] = 180,
+    [26] = 180,
+    [27] = 180,
+    [33] = 60,
+    [56] = 180,
+    [58] = 120,
+    [79] = 180,
+    [80] = 120,
+};
+local TARGET_DEBUFF_STATUS_IDS = {
+    [4] = 'paralyze',
+    [13] = 'slow',
+    [134] = 'dia',
+};
+local TARGET_DEBUFF_REMINDER_PROFILE_DEFAULT = {
+    enabled = true,
+    debuffs = { 'dia', 'paralyze', 'slow' },
+};
+local TARGET_DEBUFF_MONSTER_SPAWN_FLAG = 0x10;
 local BUFF_REMINDER_PROFILE_DEFAULT = {
     enabled = true,
     self = true,
@@ -165,6 +255,7 @@ local LIMITS = {
     width_min = 170,
     width_max = 360,
     row_height_min = 32,
+    target_row_height_with_debuffs_min = 92,
     party_row_height_with_buffs_min = 92,
     row_height_max = 132,
     row_gap_min = 0,
@@ -183,17 +274,26 @@ local state = {
     config_save_message = nil,
     config_save_message_color = nil,
     config_job_key = nil,
+    config_debuff_job_key = nil,
     buff_name_cache = { },
     buff_icon_cache = { },
+    status_icon_cache = { },
     observed_buffs = { },
+    observed_target_debuffs = { },
+    observed_target_debuff_names = { },
+    pending_target_debuff_cast = nil,
     observed_buff_zone_id = nil,
     observed_text_events = 0,
     observed_log_path = nil,
     observed_log_position = 0,
     observed_log_last_check = 0,
     observed_log_events = 0,
+    self_window_x = 36,
+    self_window_y = 164,
     party_window_x = 36,
     party_window_y = 362,
+    pet_window_x = 36,
+    pet_window_y = 230,
     target_window_x = 36,
     target_window_y = 296,
 };
@@ -230,6 +330,109 @@ local function clamp_int(value, min_value, max_value)
     return math.floor(clamp(value, min_value, max_value) + 0.5);
 end
 
+function normalize_frame_width(value, fallback)
+    value = tonumber(value);
+    if (value == nil or value <= 0) then
+        value = fallback;
+    end
+
+    return clamp_int(value, LIMITS.width_min, LIMITS.width_max);
+end
+
+function normalize_frame_row_height(value, fallback)
+    value = tonumber(value);
+    if (value == nil or value <= 0) then
+        value = fallback;
+    end
+
+    return clamp_int(value, LIMITS.row_height_min, LIMITS.row_height_max);
+end
+
+function normalize_frame_row_gap(value, fallback)
+    value = tonumber(value);
+    if (value == nil or value < 0) then
+        value = fallback;
+    end
+
+    return clamp_int(value, LIMITS.row_gap_min, LIMITS.row_gap_max);
+end
+
+function normalize_frame_opacity(value, fallback)
+    value = tonumber(value);
+    if (value == nil or value <= 0) then
+        value = fallback;
+    end
+
+    return clamp_int(value, LIMITS.opacity_min, LIMITS.opacity_max);
+end
+
+function frame_layout(kind)
+    local settings = state.settings;
+    return {
+        width = settings[('%s_frame_width'):fmt(kind)] or settings.frame_width,
+        row_height = settings[('%s_row_height'):fmt(kind)] or settings.row_height,
+        row_gap = settings[('%s_row_gap'):fmt(kind)] or settings.row_gap,
+        opacity = settings[('%s_opacity'):fmt(kind)] or settings.opacity,
+    };
+end
+
+function party_size(value)
+    return clamp_int(value, 1, 6);
+end
+
+function normalize_party_size_layout(layout, size, settings)
+    layout = type(layout) == 'table' and layout or { };
+
+    return {
+        x = clamp_int(layout.x or layout.window_x or settings.party_window_x, -2000, 4000),
+        y = clamp_int(layout.y or layout.window_y or settings.party_window_y, -2000, 4000),
+        width = normalize_frame_width(layout.frame_width or layout.width, settings.party_frame_width),
+        row_height = normalize_frame_row_height(layout.row_height, settings.party_row_height),
+        row_gap = normalize_frame_row_gap(layout.row_gap, settings.party_row_gap),
+        opacity = normalize_frame_opacity(layout.opacity, settings.party_opacity),
+        size = party_size(size),
+    };
+end
+
+function normalize_party_size_layouts(layouts, settings)
+    layouts = type(layouts) == 'table' and layouts or { };
+
+    local result = { };
+    for size = 1, 6, 1 do
+        result[size] = normalize_party_size_layout(layouts[size], size, settings);
+    end
+
+    return result;
+end
+
+function party_layout_for_size(size)
+    size = party_size(size);
+    if (type(state.settings.party_size_layouts) ~= 'table') then
+        state.settings.party_size_layouts = normalize_party_size_layouts(nil, state.settings);
+    end
+    if (type(state.settings.party_size_layouts[size]) ~= 'table') then
+        state.settings.party_size_layouts[size] = normalize_party_size_layout(nil, size, state.settings);
+    end
+
+    return state.settings.party_size_layouts[size];
+end
+
+function party_size_from_units(units)
+    if (type(units) == 'table' and tonumber(units.party_size) ~= nil) then
+        return party_size(units.party_size);
+    end
+
+    return party_size(type(units) == 'table' and (#units + 1) or 1);
+end
+
+function update_party_layout_position(size, x, y)
+    local layout = party_layout_for_size(size);
+    layout.x = clamp_int(x, -2000, 4000);
+    layout.y = clamp_int(y, -2000, 4000);
+    state.party_window_x = layout.x;
+    state.party_window_y = layout.y;
+end
+
 local function apply_alpha(color, alpha)
     return {
         color[1] or 0,
@@ -249,6 +452,10 @@ local function clean_string(value)
     end
 
     return tostring(value):gsub('%z', ''):gsub('^%s+', ''):gsub('%s+$', '');
+end
+
+local function compact_name(value)
+    return clean_string(value):lower():gsub('%s+', ' ');
 end
 
 local function safe_read(reader, default)
@@ -276,8 +483,33 @@ local function normalize_buff_key(value)
     return BUFF_DEFINITIONS[key] ~= nil and key or nil;
 end
 
+local function normalize_target_debuff_key(value)
+    local key = clean_string(value):lower():gsub('[%s%-]+', '_');
+    if (key == 'dia' or key == 'dia_1') then
+        return 'dia';
+    end
+    if (key == 'paralyze' or key == 'paralysis' or key == 'paralyze_1') then
+        return 'paralyze';
+    end
+    if (key == 'slow' or key == 'slow_1' or key == 'slow_i' or key == 'slow_2' or key == 'slow_ii' or key == 'slowii') then
+        return 'slow';
+    end
+
+    return TARGET_DEBUFF_DEFINITIONS[key] ~= nil and key or nil;
+end
+
 local function append_buff_key(result, seen, value)
     local key = normalize_buff_key(value);
+    if (key == nil or seen[key]) then
+        return;
+    end
+
+    seen[key] = true;
+    table.insert(result, key);
+end
+
+local function append_target_debuff_key(result, seen, value)
+    local key = normalize_target_debuff_key(value);
     if (key == nil or seen[key]) then
         return;
     end
@@ -301,6 +533,27 @@ local function normalize_buff_list(source)
     for key, value in pairs(source) do
         if (type(key) == 'string' and value == true) then
             append_buff_key(result, seen, key);
+        end
+    end
+
+    return result;
+end
+
+local function normalize_target_debuff_list(source)
+    local result = { };
+    local seen = { };
+
+    if (type(source) ~= 'table') then
+        return result;
+    end
+
+    for _, value in ipairs(source) do
+        append_target_debuff_key(result, seen, value);
+    end
+
+    for key, value in pairs(source) do
+        if (type(key) == 'string' and value == true) then
+            append_target_debuff_key(result, seen, key);
         end
     end
 
@@ -369,6 +622,30 @@ local function normalize_reminder_profile(source, fallback)
     return profile;
 end
 
+local function normalize_target_debuff_reminder_profile(source, fallback)
+    fallback = fallback or TARGET_DEBUFF_REMINDER_PROFILE_DEFAULT;
+
+    local profile = {
+        enabled = fallback.enabled == true,
+        debuffs = copy_buff_list(fallback.debuffs),
+    };
+
+    if (type(source) ~= 'table') then
+        return profile;
+    end
+
+    if (source.enabled ~= nil) then
+        profile.enabled = source.enabled == true;
+    end
+
+    local debuffs = source.debuffs or source.required or source.required_debuffs;
+    if (debuffs ~= nil) then
+        profile.debuffs = normalize_target_debuff_list(debuffs);
+    end
+
+    return profile;
+end
+
 local function normalize_buff_reminders(source)
     local result = { };
     local default_source = nil;
@@ -390,6 +667,33 @@ local function normalize_buff_reminders(source)
         local job = normalize_job_key(key);
         if (job ~= '' and job ~= 'DEFAULT' and type(value) == 'table') then
             result[job] = normalize_reminder_profile(value, result.default);
+        end
+    end
+
+    return result;
+end
+
+local function normalize_target_debuff_reminders(source)
+    local result = { };
+    local default_source = nil;
+
+    if (type(source) == 'table') then
+        default_source = source.default;
+        if (default_source == nil and (source.enabled ~= nil or source.debuffs ~= nil or source.required ~= nil or source.required_debuffs ~= nil)) then
+            default_source = source;
+        end
+    end
+
+    result.default = normalize_target_debuff_reminder_profile(default_source, TARGET_DEBUFF_REMINDER_PROFILE_DEFAULT);
+
+    if (type(source) ~= 'table') then
+        return result;
+    end
+
+    for key, value in pairs(source) do
+        local job = normalize_job_key(key);
+        if (job ~= '' and job ~= 'DEFAULT' and type(value) == 'table') then
+            result[job] = normalize_target_debuff_reminder_profile(value, result.default);
         end
     end
 
@@ -450,8 +754,10 @@ end
 local function normalize_settings(settings)
     settings.visible = settings.visible ~= false;
     settings.locked = settings.locked == true;
+    settings.show_self = settings.show_self ~= false;
     settings.show_target = settings.show_target ~= false;
     settings.show_party = settings.show_party ~= false;
+    settings.show_pet = settings.show_pet ~= false;
     settings.show_alliance = settings.show_alliance == true;
     settings.show_empty_target = settings.show_empty_target ~= false;
     settings.same_zone_dim = settings.same_zone_dim ~= false;
@@ -460,18 +766,43 @@ local function normalize_settings(settings)
     settings.show_tp = settings.show_tp ~= false;
     settings.show_buffs = settings.show_buffs ~= false;
     settings.show_buff_reminders = settings.show_buff_reminders ~= false;
+    settings.show_target_debuffs = settings.show_target_debuffs ~= false;
+    settings.show_target_debuff_reminders = settings.show_target_debuff_reminders ~= false;
     settings.hide_buff_reminders_in_towns = settings.hide_buff_reminders_in_towns ~= false;
 
+    settings.self_window_x = clamp_int(settings.self_window_x, -2000, 4000);
+    settings.self_window_y = clamp_int(settings.self_window_y, -2000, 4000);
     settings.party_window_x = clamp_int(settings.party_window_x, -2000, 4000);
     settings.party_window_y = clamp_int(settings.party_window_y, -2000, 4000);
+    settings.pet_window_x = clamp_int(settings.pet_window_x, -2000, 4000);
+    settings.pet_window_y = clamp_int(settings.pet_window_y, -2000, 4000);
     settings.target_window_x = clamp_int(settings.target_window_x, -2000, 4000);
     settings.target_window_y = clamp_int(settings.target_window_y, -2000, 4000);
     settings.frame_width = clamp_int(settings.frame_width, LIMITS.width_min, LIMITS.width_max);
     settings.row_height = clamp_int(settings.row_height, LIMITS.row_height_min, LIMITS.row_height_max);
     settings.row_gap = clamp_int(settings.row_gap, LIMITS.row_gap_min, LIMITS.row_gap_max);
     settings.max_buffs = clamp_int(settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
+    settings.party_preview_size = party_size(settings.party_preview_size);
     settings.opacity = clamp_int(settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max);
+    settings.self_frame_width = normalize_frame_width(settings.self_frame_width, settings.frame_width);
+    settings.self_row_height = normalize_frame_row_height(settings.self_row_height, settings.row_height);
+    settings.self_row_gap = normalize_frame_row_gap(settings.self_row_gap, settings.row_gap);
+    settings.self_opacity = normalize_frame_opacity(settings.self_opacity, settings.opacity);
+    settings.party_frame_width = normalize_frame_width(settings.party_frame_width, settings.frame_width);
+    settings.party_row_height = normalize_frame_row_height(settings.party_row_height, settings.row_height);
+    settings.party_row_gap = normalize_frame_row_gap(settings.party_row_gap, settings.row_gap);
+    settings.party_opacity = normalize_frame_opacity(settings.party_opacity, settings.opacity);
+    settings.party_size_layouts = normalize_party_size_layouts(settings.party_size_layouts, settings);
+    settings.pet_frame_width = normalize_frame_width(settings.pet_frame_width, settings.frame_width);
+    settings.pet_row_height = normalize_frame_row_height(settings.pet_row_height, settings.row_height);
+    settings.pet_row_gap = normalize_frame_row_gap(settings.pet_row_gap, settings.row_gap);
+    settings.pet_opacity = normalize_frame_opacity(settings.pet_opacity, settings.opacity);
+    settings.target_frame_width = normalize_frame_width(settings.target_frame_width, settings.frame_width);
+    settings.target_row_height = normalize_frame_row_height(settings.target_row_height, settings.row_height);
+    settings.target_row_gap = normalize_frame_row_gap(settings.target_row_gap, settings.row_gap);
+    settings.target_opacity = normalize_frame_opacity(settings.target_opacity, settings.opacity);
     settings.buff_reminders = normalize_buff_reminders(settings.buff_reminders);
+    settings.target_debuff_reminders = normalize_target_debuff_reminders(settings.target_debuff_reminders);
     settings.buff_reminder_suppressed_zone_ids = normalize_zone_id_list(settings.buff_reminder_suppressed_zone_ids);
 
     return settings;
@@ -497,8 +828,12 @@ local function load_config()
 
     state.settings = normalize_settings(settings);
     state.visible[1] = state.settings.visible;
+    state.self_window_x = state.settings.self_window_x;
+    state.self_window_y = state.settings.self_window_y;
     state.party_window_x = state.settings.party_window_x;
     state.party_window_y = state.settings.party_window_y;
+    state.pet_window_x = state.settings.pet_window_x;
+    state.pet_window_y = state.settings.pet_window_y;
     state.target_window_x = state.settings.target_window_x;
     state.target_window_y = state.settings.target_window_y;
 end
@@ -693,6 +1028,16 @@ local function observed_name_key(name)
     return name;
 end
 
+function observed_target_name_key(name)
+    name = clean_string(name):lower():gsub('%s+', ' ');
+    name = name:gsub('^the%s+', ''):gsub('^an%s+', ''):gsub('^a%s+', '');
+    if (#name == 0) then
+        return nil;
+    end
+
+    return name;
+end
+
 local function buff_id_for_key(key)
     key = normalize_buff_key(key);
     local definition = key ~= nil and BUFF_DEFINITIONS[key] or nil;
@@ -737,12 +1082,122 @@ local function clear_observed_buffs()
     state.observed_buffs = { };
 end
 
+local function clear_observed_target_debuffs()
+    state.observed_target_debuffs = { };
+    state.observed_target_debuff_names = { };
+    state.pending_target_debuff_cast = nil;
+end
+
+local function target_debuff_id_for_key(key)
+    key = normalize_target_debuff_key(key);
+    local definition = key ~= nil and TARGET_DEBUFF_DEFINITIONS[key] or nil;
+    return definition ~= nil and tonumber(definition.id) or nil;
+end
+
+local function prune_observed_target_debuffs()
+    local now = os.time();
+    for target_id, entry in pairs(state.observed_target_debuffs) do
+        if (type(entry) ~= 'table') then
+            state.observed_target_debuffs[target_id] = nil;
+        else
+            local has_active = false;
+            for key, value in pairs(entry) do
+                if (type(value) ~= 'table' or tonumber(value.expires_at) == nil or value.expires_at <= now) then
+                    entry[key] = nil;
+                else
+                    has_active = true;
+                end
+            end
+
+            if (not has_active) then
+                state.observed_target_debuffs[target_id] = nil;
+            end
+        end
+    end
+
+    for name, entry in pairs(state.observed_target_debuff_names) do
+        if (type(entry) ~= 'table') then
+            state.observed_target_debuff_names[name] = nil;
+        else
+            local has_active = false;
+            for key, value in pairs(entry) do
+                if (type(value) ~= 'table' or tonumber(value.expires_at) == nil or value.expires_at <= now) then
+                    entry[key] = nil;
+                else
+                    has_active = true;
+                end
+            end
+
+            if (not has_active) then
+                state.observed_target_debuff_names[name] = nil;
+            end
+        end
+    end
+end
+
+local function observed_target_debuff_key_lookup(server_id)
+    prune_observed_target_debuffs();
+
+    local target_id = tonumber(server_id);
+    local entry = target_id ~= nil and state.observed_target_debuffs[target_id] or nil;
+    local result = { };
+    if (type(entry) ~= 'table') then
+        return result;
+    end
+
+    for key, value in pairs(entry) do
+        if (type(value) == 'table' and tonumber(value.expires_at) ~= nil and value.expires_at > os.time()) then
+            result[key] = true;
+        end
+    end
+
+    return result;
+end
+
+function observed_target_debuff_name_lookup(name)
+    prune_observed_target_debuffs();
+
+    local name_key = observed_target_name_key(name);
+    local entry = name_key ~= nil and state.observed_target_debuff_names[name_key] or nil;
+    local result = { };
+    if (type(entry) ~= 'table') then
+        return result;
+    end
+
+    for key, value in pairs(entry) do
+        if (type(value) == 'table' and tonumber(value.expires_at) ~= nil and value.expires_at > os.time()) then
+            result[key] = true;
+        end
+    end
+
+    return result;
+end
+
+function observed_target_debuffs_for_unit(server_id, name)
+    local active = observed_target_debuff_key_lookup(server_id);
+    for key, enabled in pairs(observed_target_debuff_name_lookup(name)) do
+        if (enabled == true) then
+            active[key] = true;
+        end
+    end
+
+    local result = { };
+    local seen = { };
+
+    for key, _ in pairs(active) do
+        append_buff_id(result, seen, target_debuff_id_for_key(key));
+    end
+
+    return result;
+end
+
 local function sync_observed_buffs_for_party(party, self_zone)
     local zone_id = tonumber(self_zone);
     if (zone_id ~= nil) then
         zone_id = math.floor(zone_id + 0.5);
         if (state.observed_buff_zone_id ~= nil and state.observed_buff_zone_id ~= zone_id) then
             clear_observed_buffs();
+            clear_observed_target_debuffs();
         end
         state.observed_buff_zone_id = zone_id;
     end
@@ -839,6 +1294,66 @@ local function load_buff_icon(filename)
     return icon;
 end
 
+local function load_status_icon(status_id)
+    status_id = tonumber(status_id);
+    if (status_id == nil or status_id <= 0 or status_id > 0x3FF) then
+        return nil;
+    end
+
+    if (state.status_icon_cache[status_id] == false) then
+        return nil;
+    end
+    if (state.status_icon_cache[status_id] ~= nil) then
+        return state.status_icon_cache[status_id];
+    end
+
+    local device = ensure_d3d_device();
+    if (device == nil) then
+        return nil;
+    end
+
+    local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
+    local resource = resources ~= nil and safe_read(function () return resources:GetStatusIconByIndex(status_id); end, nil) or nil;
+    if (resource == nil or resource.Bitmap == nil or tonumber(resource.ImageSize) == nil) then
+        state.status_icon_cache[status_id] = false;
+        return nil;
+    end
+
+    local texture_ptr = ffi.new('IDirect3DTexture8*[1]');
+    local result = safe_read(function ()
+        return ffi.C.D3DXCreateTextureFromFileInMemoryEx(
+            device,
+            resource.Bitmap,
+            resource.ImageSize,
+            0xFFFFFFFF,
+            0xFFFFFFFF,
+            1,
+            0,
+            ffi.C.D3DFMT_A8R8G8B8,
+            ffi.C.D3DPOOL_MANAGED,
+            ffi.C.D3DX_DEFAULT,
+            ffi.C.D3DX_DEFAULT,
+            0xFF000000,
+            nil,
+            nil,
+            texture_ptr);
+    end, nil);
+
+    if (result ~= 0 or texture_ptr[0] == nil) then
+        state.status_icon_cache[status_id] = false;
+        return nil;
+    end
+
+    local texture = d3d8.gc_safe_release(ffi.cast('IDirect3DTexture8*', texture_ptr[0]));
+    local icon = {
+        texture = texture,
+        handle = tonumber(ffi.cast('uint32_t', texture)),
+    };
+
+    state.status_icon_cache[status_id] = icon;
+    return icon;
+end
+
 local function buff_key_from_name(name)
     name = clean_string(name):lower();
     if (name:find('protect', 1, true) ~= nil) then
@@ -855,6 +1370,10 @@ local function buff_key_from_id(buff_id)
     return buff_key_from_name(buff_name(buff_id));
 end
 
+local function target_debuff_key_from_id(debuff_id)
+    return TARGET_DEBUFF_STATUS_IDS[tonumber(debuff_id)];
+end
+
 local function active_buff_key_lookup(buffs)
     local lookup = { };
     if (type(buffs) ~= 'table') then
@@ -863,6 +1382,22 @@ local function active_buff_key_lookup(buffs)
 
     for index = 1, #buffs, 1 do
         local key = buff_key_from_id(buffs[index]);
+        if (key ~= nil) then
+            lookup[key] = true;
+        end
+    end
+
+    return lookup;
+end
+
+local function active_target_debuff_key_lookup(debuffs)
+    local lookup = { };
+    if (type(debuffs) ~= 'table') then
+        return lookup;
+    end
+
+    for index = 1, #debuffs, 1 do
+        local key = target_debuff_key_from_id(debuffs[index]);
         if (key ~= nil) then
             lookup[key] = true;
         end
@@ -926,26 +1461,65 @@ local function spell_usable_for_current_job(spell, spell_state)
     return false;
 end
 
-local function reminder_spell_available(key)
-    key = normalize_buff_key(key);
-    local definition = key ~= nil and BUFF_DEFINITIONS[key] or nil;
+local function spell_available_info(definition)
     if (definition == nil or definition.spell == nil) then
-        return false;
+        return nil;
     end
 
     local spell_state = current_player_spell_state();
     if (spell_state == nil or not truthy(spell_state.has_spell_data)) then
-        return false;
+        return nil;
     end
 
     local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
     local spell = resources ~= nil and safe_read(function () return resources:GetSpellByName(definition.spell, 0); end, nil) or nil;
     local id = spell_id(spell);
     if (spell == nil or id == nil or not truthy(safe_read(function () return spell_state.player:HasSpell(id); end, false))) then
+        return nil;
+    end
+
+    if (not spell_usable_for_current_job(spell, spell_state)) then
+        return nil;
+    end
+
+    return {
+        id = id,
+        spell = spell,
+    };
+end
+
+local function reminder_spell_available(key)
+    key = normalize_buff_key(key);
+    local definition = key ~= nil and BUFF_DEFINITIONS[key] or nil;
+    return spell_available_info(definition) ~= nil;
+end
+
+local function target_debuff_spell_available(key)
+    key = normalize_target_debuff_key(key);
+    local definition = key ~= nil and TARGET_DEBUFF_DEFINITIONS[key] or nil;
+    return spell_available_info(definition) ~= nil;
+end
+
+local function spell_recast_timer(spell_id)
+    spell_id = tonumber(spell_id);
+    if (spell_id == nil or spell_id <= 0) then
+        return 0;
+    end
+
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    local recast = memory ~= nil and safe_read(function () return memory:GetRecast(); end, nil) or nil;
+    return recast ~= nil and (tonumber(safe_read(function () return recast:GetSpellTimer(spell_id); end, 0)) or 0) or 0;
+end
+
+local function target_debuff_spell_recast_active(key)
+    key = normalize_target_debuff_key(key);
+    local definition = key ~= nil and TARGET_DEBUFF_DEFINITIONS[key] or nil;
+    local info = spell_available_info(definition);
+    if (info == nil or info.id == nil) then
         return false;
     end
 
-    return spell_usable_for_current_job(spell, spell_state);
+    return spell_recast_timer(info.id) > 0;
 end
 
 local function reminder_profile_for_job(job)
@@ -955,6 +1529,16 @@ local function reminder_profile_for_job(job)
     end
 
     return reminders[job] or reminders.default or BUFF_REMINDER_PROFILE_DEFAULT;
+end
+
+local function target_debuff_reminder_profile_for_job(job)
+    local reminders = state.settings.target_debuff_reminders;
+    if (type(reminders) ~= 'table') then
+        return TARGET_DEBUFF_REMINDER_PROFILE_DEFAULT;
+    end
+
+    job = normalize_job_key(job);
+    return reminders[job] or reminders.default or TARGET_DEBUFF_REMINDER_PROFILE_DEFAULT;
 end
 
 local function ensure_reminder_profile(job)
@@ -977,6 +1561,26 @@ local function ensure_reminder_profile(job)
     return state.settings.buff_reminders[job];
 end
 
+local function ensure_target_debuff_reminder_profile(job)
+    if (type(state.settings.target_debuff_reminders) ~= 'table') then
+        state.settings.target_debuff_reminders = normalize_target_debuff_reminders(nil);
+    end
+    if (type(state.settings.target_debuff_reminders.default) ~= 'table') then
+        state.settings.target_debuff_reminders.default = normalize_target_debuff_reminder_profile(nil, TARGET_DEBUFF_REMINDER_PROFILE_DEFAULT);
+    end
+
+    job = normalize_job_key(job);
+    if (#job == 0 or job == 'DEFAULT') then
+        return state.settings.target_debuff_reminders.default;
+    end
+
+    if (type(state.settings.target_debuff_reminders[job]) ~= 'table') then
+        state.settings.target_debuff_reminders[job] = normalize_target_debuff_reminder_profile(nil, state.settings.target_debuff_reminders.default);
+    end
+
+    return state.settings.target_debuff_reminders[job];
+end
+
 local function buff_list_has(buffs, key)
     key = normalize_buff_key(key);
     if (key == nil or type(buffs) ~= 'table') then
@@ -985,6 +1589,21 @@ local function buff_list_has(buffs, key)
 
     for _, value in ipairs(buffs) do
         if (normalize_buff_key(value) == key) then
+            return true;
+        end
+    end
+
+    return false;
+end
+
+local function target_debuff_list_has(debuffs, key)
+    key = normalize_target_debuff_key(key);
+    if (key == nil or type(debuffs) ~= 'table') then
+        return false;
+    end
+
+    for _, value in ipairs(debuffs) do
+        if (normalize_target_debuff_key(value) == key) then
             return true;
         end
     end
@@ -1019,6 +1638,33 @@ local function set_profile_buff_enabled(profile, key, enabled)
     profile.buffs = result;
 end
 
+local function set_profile_target_debuff_enabled(profile, key, enabled)
+    if (type(profile) ~= 'table') then
+        return;
+    end
+
+    key = normalize_target_debuff_key(key);
+    if (key == nil) then
+        return;
+    end
+
+    local result = { };
+    local seen = { };
+    for _, value in ipairs(profile.debuffs or { }) do
+        local existing = normalize_target_debuff_key(value);
+        if (existing ~= nil and existing ~= key and not seen[existing]) then
+            seen[existing] = true;
+            table.insert(result, existing);
+        end
+    end
+
+    if (enabled == true and not seen[key]) then
+        table.insert(result, key);
+    end
+
+    profile.debuffs = result;
+end
+
 local function unit_reminder_enabled(unit, profile)
     if (unit.same_zone == false or profile.enabled ~= true) then
         return false;
@@ -1047,6 +1693,58 @@ local function reminder_buff_keys(unit)
     for _, key in ipairs(profile.buffs or { }) do
         if (reminder_spell_available(key)) then
             table.insert(result, normalize_buff_key(key));
+        end
+    end
+
+    return result;
+end
+
+local function target_debuff_suppressed_name(name)
+    local value = compact_name(name);
+    if (#value == 0) then
+        return false;
+    end
+
+    if (value == 'armoury crate' or value == 'armory crate' or value == 'sturdy pyxis') then
+        return true;
+    end
+
+    return value:find('treasure', 1, true) ~= nil
+        and (value:find('chest', 1, true) ~= nil or value:find('coffer', 1, true) ~= nil or value:find('casket', 1, true) ~= nil);
+end
+
+local function target_debuff_has_monster_spawn_flag(spawn_flags)
+    spawn_flags = tonumber(spawn_flags);
+    return spawn_flags ~= nil and bit.band(spawn_flags, TARGET_DEBUFF_MONSTER_SPAWN_FLAG) == TARGET_DEBUFF_MONSTER_SPAWN_FLAG;
+end
+
+local function target_debuff_target_eligible(unit)
+    if (unit == nil or unit.kind ~= 'target' or unit.target_type ~= 2 or target_debuff_suppressed_name(unit.name)) then
+        return false;
+    end
+
+    if (unit.spawn_flags ~= nil and not target_debuff_has_monster_spawn_flag(unit.spawn_flags)) then
+        return false;
+    end
+
+    return true;
+end
+
+local function target_debuff_reminder_keys(unit)
+    if (not state.settings.show_target_debuff_reminders or not target_debuff_target_eligible(unit) or tonumber(unit.server_id) == nil or tonumber(unit.server_id) == 0) then
+        return { };
+    end
+
+    local profile = target_debuff_reminder_profile_for_job(unit.reminder_job or 'default');
+    if (profile.enabled ~= true) then
+        return { };
+    end
+
+    local result = { };
+    for _, key in ipairs(profile.debuffs or { }) do
+        key = normalize_target_debuff_key(key);
+        if (key ~= nil and target_debuff_spell_available(key) and not target_debuff_spell_recast_active(key)) then
+            table.insert(result, key);
         end
     end
 
@@ -1095,6 +1793,57 @@ local function buff_icon_items(unit)
                 name = definition.label,
                 handle = icon.handle,
                 state = 'missing',
+            });
+        end
+    end
+
+    return items;
+end
+
+local function target_debuff_icon_items(unit)
+    local items = { };
+    if (type(unit.debuffs) ~= 'table') then
+        return items;
+    end
+
+    local max_buffs = state.settings.max_buffs or DEFAULT_SETTINGS.max_buffs;
+    local active_keys = active_target_debuff_key_lookup(unit.debuffs);
+
+    for index = 1, #unit.debuffs, 1 do
+        if (#items >= max_buffs) then
+            break;
+        end
+
+        local debuff_id = unit.debuffs[index];
+        local key = target_debuff_key_from_id(debuff_id);
+        local definition = key ~= nil and TARGET_DEBUFF_DEFINITIONS[key] or nil;
+        local icon = definition ~= nil and load_status_icon(definition.id) or nil;
+        if (icon ~= nil) then
+            table.insert(items, {
+                id = debuff_id,
+                key = key,
+                name = buff_name(debuff_id),
+                handle = icon.handle,
+                state = 'active',
+                kind = 'debuff',
+            });
+        end
+    end
+
+    for _, key in ipairs(target_debuff_reminder_keys(unit)) do
+        if (#items >= max_buffs) then
+            break;
+        end
+
+        local definition = TARGET_DEBUFF_DEFINITIONS[key];
+        local icon = definition ~= nil and load_status_icon(definition.id) or nil;
+        if (icon ~= nil and active_keys[key] ~= true) then
+            table.insert(items, {
+                key = key,
+                name = definition.label,
+                handle = icon.handle,
+                state = 'missing',
+                kind = 'debuff',
             });
         end
     end
@@ -1260,6 +2009,28 @@ local function step_config_job(delta)
     mark_config_changed();
 end
 
+local function current_config_debuff_job_key()
+    local current_job = current_player_job_key();
+    if (current_job == 'default') then
+        current_job = 'BST';
+    end
+
+    local selected = normalize_job_key(state.config_debuff_job_key);
+    if (#selected == 0) then
+        selected = current_job;
+    end
+
+    state.config_debuff_job_key = selected;
+    return selected;
+end
+
+local function step_config_debuff_job(delta)
+    local index = job_order_index(current_config_debuff_job_key());
+    index = ((index - 1 + delta) % #JOB_ORDER) + 1;
+    state.config_debuff_job_key = JOB_ORDER[index];
+    mark_config_changed();
+end
+
 local function path_join(left, right)
     left = tostring(left or '');
     right = tostring(right or '');
@@ -1285,6 +2056,20 @@ end
 
 local function buff_list_text(buffs)
     local normalized = normalize_buff_list(buffs);
+    if (#normalized == 0) then
+        return '{ }';
+    end
+
+    local pieces = { };
+    for _, key in ipairs(normalized) do
+        table.insert(pieces, ("'%s'"):fmt(key));
+    end
+
+    return ('{ %s }'):fmt(table.concat(pieces, ', '));
+end
+
+local function target_debuff_list_text(debuffs)
+    local normalized = normalize_target_debuff_list(debuffs);
     if (#normalized == 0) then
         return '{ }';
     end
@@ -1357,13 +2142,41 @@ local function append_profile_config(lines, key, profile)
     table.insert(lines, '            },');
 end
 
+local function append_target_debuff_profile_config(lines, key, profile)
+    profile = normalize_target_debuff_reminder_profile(profile, state.settings.target_debuff_reminders.default);
+
+    table.insert(lines, ('            %s = {'):fmt(config_key_text(key)));
+    table.insert(lines, ('                enabled = %s,'):fmt(bool_text(profile.enabled)));
+    table.insert(lines, ('                debuffs = %s,'):fmt(target_debuff_list_text(profile.debuffs)));
+    table.insert(lines, '            },');
+end
+
+function append_party_size_layout_config(lines, size, layout)
+    layout = normalize_party_size_layout(layout, size, state.settings);
+
+    table.insert(lines, ('            [%d] = { x = %d, y = %d, frame_width = %d, row_height = %d, row_gap = %d, opacity = %d },'):fmt(
+        size,
+        layout.x,
+        layout.y,
+        layout.width,
+        layout.row_height,
+        layout.row_gap,
+        layout.opacity));
+end
+
 local function capture_runtime_settings_for_save()
     state.settings.visible = state.visible[1] == true;
+    state.settings.self_window_x = state.self_window_x;
+    state.settings.self_window_y = state.self_window_y;
     state.settings.party_window_x = state.party_window_x;
     state.settings.party_window_y = state.party_window_y;
+    state.settings.pet_window_x = state.pet_window_x;
+    state.settings.pet_window_y = state.pet_window_y;
     state.settings.target_window_x = state.target_window_x;
     state.settings.target_window_y = state.target_window_y;
+    state.settings.party_size_layouts = normalize_party_size_layouts(state.settings.party_size_layouts, state.settings);
     state.settings.buff_reminders = normalize_buff_reminders(state.settings.buff_reminders);
+    state.settings.target_debuff_reminders = normalize_target_debuff_reminders(state.settings.target_debuff_reminders);
     state.settings.buff_reminder_suppressed_zone_ids = normalize_zone_id_list(state.settings.buff_reminder_suppressed_zone_ids);
 
     return normalize_settings(state.settings);
@@ -1371,14 +2184,17 @@ end
 
 local function config_text_from_settings(settings)
     local reminders = settings.buff_reminders or normalize_buff_reminders(nil);
+    local target_debuff_reminders = settings.target_debuff_reminders or normalize_target_debuff_reminders(nil);
     local lines = {
         'return {',
         '    settings = {',
         ('        visible = %s,'):fmt(bool_text(settings.visible)),
         ('        locked = %s,'):fmt(bool_text(settings.locked)),
         '',
+        ('        show_self = %s,'):fmt(bool_text(settings.show_self)),
         ('        show_target = %s,'):fmt(bool_text(settings.show_target)),
         ('        show_party = %s,'):fmt(bool_text(settings.show_party)),
+        ('        show_pet = %s,'):fmt(bool_text(settings.show_pet)),
         ('        show_alliance = %s,'):fmt(bool_text(settings.show_alliance)),
         ('        show_empty_target = %s,'):fmt(bool_text(settings.show_empty_target)),
         '',
@@ -1388,12 +2204,19 @@ local function config_text_from_settings(settings)
         ('        show_tp = %s,'):fmt(bool_text(settings.show_tp)),
         ('        show_buffs = %s,'):fmt(bool_text(settings.show_buffs)),
         ('        show_buff_reminders = %s,'):fmt(bool_text(settings.show_buff_reminders)),
+        ('        show_target_debuffs = %s,'):fmt(bool_text(settings.show_target_debuffs)),
+        ('        show_target_debuff_reminders = %s,'):fmt(bool_text(settings.show_target_debuff_reminders)),
         ('        hide_buff_reminders_in_towns = %s,'):fmt(bool_text(settings.hide_buff_reminders_in_towns)),
         ('        buff_reminder_suppressed_zone_ids = %s,'):fmt(zone_id_list_text(settings.buff_reminder_suppressed_zone_ids)),
         ('        max_buffs = %d,'):fmt(settings.max_buffs),
+        ('        party_preview_size = %d,'):fmt(settings.party_preview_size),
         '',
+        ('        self_window_x = %d,'):fmt(state.self_window_x),
+        ('        self_window_y = %d,'):fmt(state.self_window_y),
         ('        party_window_x = %d,'):fmt(state.party_window_x),
         ('        party_window_y = %d,'):fmt(state.party_window_y),
+        ('        pet_window_x = %d,'):fmt(state.pet_window_x),
+        ('        pet_window_y = %d,'):fmt(state.pet_window_y),
         ('        target_window_x = %d,'):fmt(state.target_window_x),
         ('        target_window_y = %d,'):fmt(state.target_window_y),
         '',
@@ -1402,11 +2225,52 @@ local function config_text_from_settings(settings)
         ('        row_gap = %d,'):fmt(settings.row_gap),
         ('        opacity = %d,'):fmt(settings.opacity),
         '',
+        ('        self_frame_width = %d,'):fmt(settings.self_frame_width),
+        ('        self_row_height = %d,'):fmt(settings.self_row_height),
+        ('        self_row_gap = %d,'):fmt(settings.self_row_gap),
+        ('        self_opacity = %d,'):fmt(settings.self_opacity),
+        ('        party_frame_width = %d,'):fmt(settings.party_frame_width),
+        ('        party_row_height = %d,'):fmt(settings.party_row_height),
+        ('        party_row_gap = %d,'):fmt(settings.party_row_gap),
+        ('        party_opacity = %d,'):fmt(settings.party_opacity),
+        '        party_size_layouts = {',
+    };
+
+    for size = 1, 6, 1 do
+        append_party_size_layout_config(lines, size, settings.party_size_layouts[size]);
+    end
+
+    table.insert(lines, '        },');
+    table.insert(lines, '');
+
+    local tail_lines = {
+        ('        pet_frame_width = %d,'):fmt(settings.pet_frame_width),
+        ('        pet_row_height = %d,'):fmt(settings.pet_row_height),
+        ('        pet_row_gap = %d,'):fmt(settings.pet_row_gap),
+        ('        pet_opacity = %d,'):fmt(settings.pet_opacity),
+        ('        target_frame_width = %d,'):fmt(settings.target_frame_width),
+        ('        target_row_height = %d,'):fmt(settings.target_row_height),
+        ('        target_row_gap = %d,'):fmt(settings.target_row_gap),
+        ('        target_opacity = %d,'):fmt(settings.target_opacity),
+        '',
         '        buff_reminders = {',
     };
 
+    for _, line in ipairs(tail_lines) do
+        table.insert(lines, line);
+    end
+
     for _, key in ipairs(reminder_profile_keys(reminders)) do
         append_profile_config(lines, key, reminders[key]);
+        table.insert(lines, '');
+    end
+
+    table.insert(lines, '        },');
+    table.insert(lines, '');
+    table.insert(lines, '        target_debuff_reminders = {');
+
+    for _, key in ipairs(reminder_profile_keys(target_debuff_reminders)) do
+        append_target_debuff_profile_config(lines, key, target_debuff_reminders[key]);
         table.insert(lines, '');
     end
 
@@ -1445,7 +2309,7 @@ local function party_member_unit(party, index, self_zone, reminder_job, reminder
 
     local zone_id = safe_read(function () return party:GetMemberZone(index); end, nil);
     local same_zone = self_zone == nil or zone_id == nil or zone_id == self_zone;
-    local tag = index == 0 and 'YOU' or tostring(index + 1);
+    local tag = index == 0 and 'YOU' or tostring(index);
     local category = party_member_category(index, target_index, server_id);
 
     if (category == 'trust' and same_zone == false) then
@@ -1474,6 +2338,23 @@ local function party_member_unit(party, index, self_zone, reminder_job, reminder
     };
 end
 
+function collect_self_unit()
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    if (memory == nil) then
+        return nil;
+    end
+
+    local party = safe_read(function () return memory:GetParty(); end, nil);
+    if (party == nil) then
+        return nil;
+    end
+
+    local self_zone = safe_read(function () return party:GetMemberZone(0); end, nil);
+    sync_observed_buffs_for_party(party, self_zone);
+
+    return party_member_unit(party, 0, self_zone, current_player_job_key(party), buff_reminders_suppressed_for_zone(self_zone));
+end
+
 local function collect_party_units()
     local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
     if (memory == nil) then
@@ -1490,17 +2371,55 @@ local function collect_party_units()
     local reminders_suppressed = buff_reminders_suppressed_for_zone(self_zone);
     local max_index = state.settings.show_alliance and 17 or 5;
     local units = { };
+    local total_size = party_member_unit(party, 0, self_zone, reminder_job, reminders_suppressed) ~= nil and 1 or 0;
 
     sync_observed_buffs_for_party(party, self_zone);
 
-    for index = 0, max_index, 1 do
+    for index = 1, max_index, 1 do
         local unit = party_member_unit(party, index, self_zone, reminder_job, reminders_suppressed);
         if (unit ~= nil) then
             table.insert(units, unit);
+            total_size = total_size + 1;
         end
     end
 
+    units.party_size = party_size(total_size);
     return units;
+end
+
+function party_preview_unit(index)
+    return {
+        kind = 'party',
+        tag = tostring(index),
+        index = index,
+        name = ('Party %d'):fmt(index),
+        category = 'player',
+        reminder_job = current_player_job_key(),
+        reminders_suppressed = true,
+        hp_pct = math.max(48, 100 - (index * 7)),
+        mp_pct = math.max(34, 92 - (index * 8)),
+        tp = index * 230,
+        job = ({ 'WAR30/MNK15', 'WHM30/BLM15', 'SAM30/WAR15', 'BRD30/WHM15', 'RDM30/WHM15' })[index] or '',
+        buffs = index == 1 and { 40, 41 } or { 40 },
+        same_zone = true,
+        dim = false,
+    };
+end
+
+function party_preview_units(units, size)
+    size = party_size(size);
+
+    local result = { };
+    local display_count = math.max(size - 1, 0);
+    for index = 1, display_count, 1 do
+        if (type(units) == 'table' and units[index] ~= nil) then
+            table.insert(result, units[index]);
+        else
+            table.insert(result, party_preview_unit(index));
+        end
+    end
+
+    return result;
 end
 
 local function collect_target_unit()
@@ -1548,16 +2467,75 @@ local function collect_target_unit()
         hp_pct = safe_read(function () return target:GetWindowHPPercent(); end, nil);
     end
 
+    local server_id = safe_read(function () return entity:GetServerId(active_index); end, nil);
+    if (server_id == nil or server_id == 0) then
+        server_id = safe_read(function () return target:GetServerId(0); end, nil);
+    end
+    local target_type = safe_read(function () return entity:GetType(active_index); end, nil);
+    local spawn_flags = safe_read(function () return entity:GetSpawnFlags(active_index); end, nil);
+
     return {
         kind = 'target',
         tag = is_sub_target_active and 'ST' or 'T',
         index = active_index,
+        server_id = server_id,
+        target_type = target_type,
+        spawn_flags = spawn_flags,
         name = #name > 0 and name or ('Target %d'):fmt(active_index),
         hp_pct = hp_pct,
         mp_pct = nil,
         tp = nil,
         distance = entity_distance(entity, active_index),
         job = '',
+        reminder_job = current_player_job_key(),
+        debuffs = observed_target_debuffs_for_unit(server_id, name),
+        same_zone = true,
+        dim = false,
+    };
+end
+
+function collect_pet_unit()
+    local player_entity = safe_read(function () return GetPlayerEntity(); end, nil);
+    if (player_entity == nil) then
+        return nil;
+    end
+
+    local pet_index = tonumber(safe_read(function () return player_entity.PetTargetIndex; end, 0)) or 0;
+    if (pet_index <= 0) then
+        return nil;
+    end
+
+    local pet = safe_read(function () return GetEntity(pet_index); end, nil);
+    if (pet == nil) then
+        return nil;
+    end
+
+    local name = clean_string(safe_read(function () return pet.Name; end, ''));
+    if (#name == 0) then
+        return nil;
+    end
+
+    local distance = nil;
+    local raw_distance = tonumber(safe_read(function () return pet.Distance; end, nil));
+    if (raw_distance ~= nil and raw_distance >= 0) then
+        distance = math.sqrt(raw_distance);
+    end
+
+    local player = safe_read(function () return AshitaCore:GetMemoryManager():GetPlayer(); end, nil);
+
+    return {
+        kind = 'pet',
+        tag = 'PET',
+        index = pet_index,
+        server_id = safe_read(function () return pet.ServerId; end, nil),
+        name = name,
+        hp_pct = safe_read(function () return pet.HPPercent; end, nil),
+        mp_pct = player ~= nil and safe_read(function () return player:GetPetMPPercent(); end, nil) or nil,
+        tp = player ~= nil and safe_read(function () return player:GetPetTP(); end, nil) or nil,
+        distance = distance,
+        job = '',
+        buffs = { },
+        debuffs = { },
         same_zone = true,
         dim = false,
     };
@@ -1622,6 +2600,18 @@ local function unit_right_label(unit)
         end
 
         return '';
+    end
+
+    if (unit.kind == 'pet') then
+        local pieces = { };
+        if (unit.distance ~= nil) then
+            table.insert(pieces, ('%.1f'):fmt(unit.distance));
+        end
+        if (state.settings.show_tp and tonumber(unit.tp) ~= nil) then
+            table.insert(pieces, ('%dTP'):fmt(unit.tp));
+        end
+
+        return table.concat(pieces, ' ');
     end
 
     local pieces = { };
@@ -1700,11 +2690,50 @@ local function draw_buff_icon_row(unit, x, y, width, alpha)
     imgui.SetCursorScreenPos({ x, y });
 end
 
-local function draw_unit_row(unit, width, row_height)
+local function draw_target_debuff_icon_row(unit, x, y, width, alpha)
+    if (not state.settings.show_target_debuffs or not target_debuff_target_eligible(unit)) then
+        return;
+    end
+
+    local items = target_debuff_icon_items(unit);
+    if (#items == 0) then
+        return;
+    end
+
+    local draw_list = imgui.GetWindowDrawList();
+    local tint = unit.dim and { 0.62, 0.62, 0.62, 0.62 } or { 1.00, 1.00, 1.00, 1.00 };
+    local icon_x = x + 8;
+    local icon_y = y + 24;
+    local max_x = x + width - 8;
+
+    for _, item in ipairs(items) do
+        if ((icon_x + BUFF_ICON_SIZE + 3) > max_x) then
+            break;
+        end
+
+        draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint);
+        if (imgui.IsItemHovered()) then
+            imgui.BeginTooltip();
+            if (item.state == 'missing') then
+                imgui.TextColored(COLORS.warning, ('Missing: %s'):fmt(item.name));
+            else
+                imgui.Text(item.name);
+            end
+            imgui.EndTooltip();
+        end
+
+        icon_x = icon_x + BUFF_ICON_SIZE + BUFF_ICON_GAP;
+    end
+
+    imgui.SetCursorScreenPos({ x, y });
+end
+
+local function draw_unit_row(unit, layout, row_height)
     local x, y = imgui.GetCursorScreenPos();
     local draw_list = imgui.GetWindowDrawList();
     local settings = state.settings;
-    local alpha = (settings.opacity / 100) * (unit.dim and 0.62 or 1.0);
+    local width = layout.width;
+    local alpha = (layout.opacity / 100) * (unit.dim and 0.62 or 1.0);
     local row_bg = unit.dim and COLORS.row_dim or COLORS.row_bg;
     local border = unit.kind == 'target' and COLORS.row_border_active or COLORS.row_border;
     local hp = percent_value(unit.hp_pct);
@@ -1730,10 +2759,11 @@ local function draw_unit_row(unit, width, row_height)
     end
 
     draw_buff_icon_row(unit, x, y, width, alpha);
+    draw_target_debuff_icon_row(unit, x, y, width, alpha);
 
     draw_bar(draw_list, bar_x, hp_y, bar_w, 6, unit.hp_pct, hp_color, alpha);
 
-    if (unit.kind == 'party') then
+    if (unit.kind == 'party' or unit.kind == 'pet') then
         draw_bar(draw_list, bar_x, mp_y, bar_w, 4, unit.mp_pct, COLORS.mp, alpha);
         if (settings.show_tp) then
             draw_tp_line(draw_list, bar_x, y + row_height - 3, bar_w, unit.tp, alpha);
@@ -1746,18 +2776,21 @@ local function draw_unit_row(unit, width, row_height)
         draw_text(draw_list, x + width - hp_text_width - 8, hp_y - 13, COLORS.text, hp_text);
     end
 
-    imgui.Dummy({ width, row_height + settings.row_gap });
+    imgui.Dummy({ width, row_height + layout.row_gap });
 end
 
-local function effective_row_height(unit)
+local function effective_row_height(unit, layout)
     if (unit.kind == 'party' and state.settings.show_buffs) then
-        return math.max(state.settings.row_height, LIMITS.party_row_height_with_buffs_min);
+        return math.max(layout.row_height, LIMITS.party_row_height_with_buffs_min);
+    end
+    if (unit.kind == 'target' and state.settings.show_target_debuffs and target_debuff_target_eligible(unit)) then
+        return math.max(layout.row_height, LIMITS.target_row_height_with_debuffs_min);
     end
 
-    return state.settings.row_height;
+    return layout.row_height;
 end
 
-local function render_window(title, open_state, x, y, width, units, position_callback)
+local function render_window(title, open_state, x, y, layout, units, position_callback)
     local settings = state.settings;
     if (#units == 0) then
         return;
@@ -1766,7 +2799,7 @@ local function render_window(title, open_state, x, y, width, units, position_cal
     local locked = settings.locked == true;
     local window_flags = locked and WINDOW_FLAGS_LOCKED or WINDOW_FLAGS_BASE;
     local pad = locked and 4 or 8;
-    local alpha = settings.opacity / 100;
+    local alpha = layout.opacity / 100;
 
     imgui.SetNextWindowPos({ x, y }, locked and ImGuiCond_Always or ImGuiCond_FirstUseEver);
     imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { pad, pad });
@@ -1779,7 +2812,7 @@ local function render_window(title, open_state, x, y, width, units, position_cal
         position_callback(current_x, current_y);
 
         for _, unit in ipairs(units) do
-            draw_unit_row(unit, width, effective_row_height(unit));
+            draw_unit_row(unit, layout, effective_row_height(unit, layout));
         end
     end
 
@@ -1803,11 +2836,34 @@ local function render_target()
         state.visible,
         state.target_window_x,
         state.target_window_y,
-        state.settings.frame_width,
+        frame_layout('target'),
         { unit },
         function (x, y)
             state.target_window_x = math.floor(x + 0.5);
             state.target_window_y = math.floor(y + 0.5);
+        end);
+end
+
+function render_self()
+    if (not state.settings.show_self) then
+        return;
+    end
+
+    local unit = collect_self_unit();
+    if (unit == nil) then
+        return;
+    end
+
+    render_window(
+        'AshitaFrames Self###AshitaFramesSelf',
+        state.visible,
+        state.self_window_x,
+        state.self_window_y,
+        frame_layout('self'),
+        { unit },
+        function (x, y)
+            state.self_window_x = math.floor(x + 0.5);
+            state.self_window_y = math.floor(y + 0.5);
         end);
 end
 
@@ -1817,16 +2873,45 @@ local function render_party()
     end
 
     local units = collect_party_units();
+    local size = party_size_from_units(units);
+    if (state.config_visible[1] == true) then
+        size = party_size(state.settings.party_preview_size);
+        units = party_preview_units(units, size);
+    end
+
+    local layout = party_layout_for_size(size);
     render_window(
-        'AshitaFrames Party###AshitaFramesParty',
+        ('AshitaFrames Party %d###AshitaFramesParty'):fmt(size),
         state.visible,
-        state.party_window_x,
-        state.party_window_y,
-        state.settings.frame_width,
+        layout.x,
+        layout.y,
+        layout,
         units,
         function (x, y)
-            state.party_window_x = math.floor(x + 0.5);
-            state.party_window_y = math.floor(y + 0.5);
+            update_party_layout_position(size, x, y);
+        end);
+end
+
+function render_pet()
+    if (not state.settings.show_pet) then
+        return;
+    end
+
+    local unit = collect_pet_unit();
+    if (unit == nil) then
+        return;
+    end
+
+    render_window(
+        'AshitaFrames Pet###AshitaFramesPet',
+        state.visible,
+        state.pet_window_x,
+        state.pet_window_y,
+        frame_layout('pet'),
+        { unit },
+        function (x, y)
+            state.pet_window_x = math.floor(x + 0.5);
+            state.pet_window_y = math.floor(y + 0.5);
         end);
 end
 
@@ -1844,6 +2929,198 @@ local function render_int_control(label, id, value, min_value, max_value, apply_
     imgui.PopItemWidth();
     if (changed) then
         apply_value(buffer[1]);
+    end
+end
+
+function render_frame_layout_controls(kind, label)
+    local width_field = ('%s_frame_width'):fmt(kind);
+    local row_height_field = ('%s_row_height'):fmt(kind);
+    local row_gap_field = ('%s_row_gap'):fmt(kind);
+    local opacity_field = ('%s_opacity'):fmt(kind);
+
+    imgui.TextColored(COLORS.accent, label);
+    render_int_control('Width', ('%s_frame_width'):fmt(kind), state.settings[width_field], LIMITS.width_min, LIMITS.width_max, function (value)
+        state.settings[width_field] = normalize_frame_width(value, state.settings.frame_width);
+        mark_config_changed();
+    end);
+    render_int_control('Base Row Height', ('%s_row_height'):fmt(kind), state.settings[row_height_field], LIMITS.row_height_min, LIMITS.row_height_max, function (value)
+        state.settings[row_height_field] = normalize_frame_row_height(value, state.settings.row_height);
+        mark_config_changed();
+    end);
+    render_int_control('Row Gap', ('%s_row_gap'):fmt(kind), state.settings[row_gap_field], LIMITS.row_gap_min, LIMITS.row_gap_max, function (value)
+        state.settings[row_gap_field] = normalize_frame_row_gap(value, state.settings.row_gap);
+        mark_config_changed();
+    end);
+    render_int_control('Opacity', ('%s_opacity'):fmt(kind), state.settings[opacity_field], LIMITS.opacity_min, LIMITS.opacity_max, function (value)
+        state.settings[opacity_field] = normalize_frame_opacity(value, state.settings.opacity);
+        mark_config_changed();
+    end, '%');
+end
+
+function render_party_size_layout_controls()
+    render_int_control('Party Size', 'party_preview_size', state.settings.party_preview_size, 1, 6, function (value)
+        state.settings.party_preview_size = party_size(value);
+        mark_config_changed();
+    end, 'members');
+
+    local size = party_size(state.settings.party_preview_size);
+    local layout = party_layout_for_size(size);
+    imgui.TextColored(COLORS.accent, ('Party Frame %d'):fmt(size));
+    render_int_control('Width', ('party_%d_frame_width'):fmt(size), layout.width, LIMITS.width_min, LIMITS.width_max, function (value)
+        layout.width = normalize_frame_width(value, state.settings.party_frame_width);
+        mark_config_changed();
+    end);
+    render_int_control('Base Row Height', ('party_%d_row_height'):fmt(size), layout.row_height, LIMITS.row_height_min, LIMITS.row_height_max, function (value)
+        layout.row_height = normalize_frame_row_height(value, state.settings.party_row_height);
+        mark_config_changed();
+    end);
+    render_int_control('Row Gap', ('party_%d_row_gap'):fmt(size), layout.row_gap, LIMITS.row_gap_min, LIMITS.row_gap_max, function (value)
+        layout.row_gap = normalize_frame_row_gap(value, state.settings.party_row_gap);
+        mark_config_changed();
+    end);
+    render_int_control('Opacity', ('party_%d_opacity'):fmt(size), layout.opacity, LIMITS.opacity_min, LIMITS.opacity_max, function (value)
+        layout.opacity = normalize_frame_opacity(value, state.settings.party_opacity);
+        mark_config_changed();
+    end, '%');
+end
+
+function render_general_config_tab()
+    imgui.TextColored(COLORS.accent, 'Global');
+
+    local visible = state.visible[1] == true;
+    if (imgui.Checkbox('Show Frames##ashitaframes_show_frames', { visible })) then
+        state.visible[1] = not visible;
+        state.settings.visible = state.visible[1];
+        mark_config_changed();
+    end
+
+    local locked = state.settings.locked == true;
+    if (imgui.Checkbox('Lock Frames##ashitaframes_lock_frames', { locked })) then
+        state.settings.locked = not locked;
+        mark_config_changed();
+    end
+
+    render_int_control('Max Buffs', 'max_buffs', state.settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max, function (value)
+        state.settings.max_buffs = clamp_int(value, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
+        mark_config_changed();
+    end, 'buffs');
+end
+
+function render_self_frame_config_tab()
+    local show_self = state.settings.show_self == true;
+    if (imgui.Checkbox('Show Self Frame##ashitaframes_show_self', { show_self })) then
+        state.settings.show_self = not show_self;
+        mark_config_changed();
+    end
+
+    imgui.Separator();
+    render_frame_layout_controls('self', 'Self Frame');
+end
+
+function render_party_frame_config_tab()
+    local show_party = state.settings.show_party == true;
+    if (imgui.Checkbox('Show Party Frame##ashitaframes_show_party', { show_party })) then
+        state.settings.show_party = not show_party;
+        mark_config_changed();
+    end
+
+    local show_alliance = state.settings.show_alliance == true;
+    if (imgui.Checkbox('Alliance Slots##ashitaframes_show_alliance', { show_alliance })) then
+        state.settings.show_alliance = not show_alliance;
+        mark_config_changed();
+    end
+
+    local same_zone_dim = state.settings.same_zone_dim == true;
+    if (imgui.Checkbox('Dim Different Zone##ashitaframes_same_zone_dim', { same_zone_dim })) then
+        state.settings.same_zone_dim = not same_zone_dim;
+        mark_config_changed();
+    end
+
+    local show_buffs = state.settings.show_buffs == true;
+    if (imgui.Checkbox('Party Buffs##ashitaframes_show_buffs', { show_buffs })) then
+        state.settings.show_buffs = not show_buffs;
+        state.settings = normalize_settings(state.settings);
+        mark_config_changed();
+    end
+
+    local show_buff_reminders = state.settings.show_buff_reminders == true;
+    if (imgui.Checkbox('Missing Buff Reminders##ashitaframes_show_buff_reminders', { show_buff_reminders })) then
+        state.settings.show_buff_reminders = not show_buff_reminders;
+        mark_config_changed();
+    end
+
+    imgui.Separator();
+    render_party_size_layout_controls();
+    imgui.Separator();
+    render_buff_reminder_config();
+end
+
+function render_pet_frame_config_tab()
+    local show_pet = state.settings.show_pet == true;
+    if (imgui.Checkbox('Show Pet Frame##ashitaframes_show_pet', { show_pet })) then
+        state.settings.show_pet = not show_pet;
+        mark_config_changed();
+    end
+
+    imgui.Separator();
+    render_frame_layout_controls('pet', 'Pet Frame');
+end
+
+function render_target_frame_config_tab()
+    local show_target = state.settings.show_target == true;
+    if (imgui.Checkbox('Show Target Frame##ashitaframes_show_target', { show_target })) then
+        state.settings.show_target = not show_target;
+        mark_config_changed();
+    end
+
+    local show_empty_target = state.settings.show_empty_target == true;
+    if (imgui.Checkbox('Show Empty Target##ashitaframes_show_empty_target', { show_empty_target })) then
+        state.settings.show_empty_target = not show_empty_target;
+        mark_config_changed();
+    end
+
+    local show_target_debuffs = state.settings.show_target_debuffs == true;
+    if (imgui.Checkbox('Target Debuffs##ashitaframes_show_target_debuffs', { show_target_debuffs })) then
+        state.settings.show_target_debuffs = not show_target_debuffs;
+        mark_config_changed();
+    end
+
+    local show_target_debuff_reminders = state.settings.show_target_debuff_reminders == true;
+    if (imgui.Checkbox('Missing Target Debuffs##ashitaframes_show_target_debuff_reminders', { show_target_debuff_reminders })) then
+        state.settings.show_target_debuff_reminders = not show_target_debuff_reminders;
+        mark_config_changed();
+    end
+
+    imgui.Separator();
+    render_frame_layout_controls('target', 'Target Frame');
+    imgui.Separator();
+    render_target_debuff_reminder_config();
+end
+
+function render_frame_config_tabs()
+    if (imgui.BeginTabBar('##ashitaframes_config_tabs', ImGuiTabBarFlags_NoCloseWithMiddleMouseButton)) then
+        if (imgui.BeginTabItem('General##ashitaframes_config_general', nil)) then
+            render_general_config_tab();
+            imgui.EndTabItem();
+        end
+        if (imgui.BeginTabItem('Self##ashitaframes_config_self', nil)) then
+            render_self_frame_config_tab();
+            imgui.EndTabItem();
+        end
+        if (imgui.BeginTabItem('Party##ashitaframes_config_party', nil)) then
+            render_party_frame_config_tab();
+            imgui.EndTabItem();
+        end
+        if (imgui.BeginTabItem('Pet##ashitaframes_config_pet', nil)) then
+            render_pet_frame_config_tab();
+            imgui.EndTabItem();
+        end
+        if (imgui.BeginTabItem('Target##ashitaframes_config_target', nil)) then
+            render_target_frame_config_tab();
+            imgui.EndTabItem();
+        end
+
+        imgui.EndTabBar();
     end
 end
 
@@ -1869,7 +3146,21 @@ local function render_profile_buff_toggle(profile, key, label)
     return true;
 end
 
-local function render_buff_reminder_config()
+local function render_profile_target_debuff_toggle(profile, key, label)
+    if (not target_debuff_spell_available(key)) then
+        return false;
+    end
+
+    local enabled = target_debuff_list_has(profile.debuffs, key);
+    if (imgui.Checkbox(('%s##ashitaframes_target_debuff_reminder_%s'):fmt(label, key), { enabled })) then
+        set_profile_target_debuff_enabled(profile, key, not enabled);
+        mark_config_changed();
+    end
+
+    return true;
+end
+
+function render_buff_reminder_config()
     imgui.Separator();
     imgui.TextColored(COLORS.accent, 'Buff Reminders');
 
@@ -1954,6 +3245,65 @@ local function render_buff_reminder_config()
     end
 end
 
+function render_target_debuff_reminder_config()
+    imgui.Separator();
+    imgui.TextColored(COLORS.accent, 'Target Debuff Reminders');
+
+    local current_job = current_player_job_key();
+    local selected_job = current_config_debuff_job_key();
+
+    if (imgui.Button('<##ashitaframes_debuff_reminder_job_prev', { 26, 0 })) then
+        step_config_debuff_job(-1);
+        selected_job = current_config_debuff_job_key();
+    end
+    imgui.SameLine(0, 6);
+    imgui.Text(('Job: %s'):fmt(selected_job));
+    imgui.SameLine(0, 6);
+    if (imgui.Button('>##ashitaframes_debuff_reminder_job_next', { 26, 0 })) then
+        step_config_debuff_job(1);
+        selected_job = current_config_debuff_job_key();
+    end
+    imgui.SameLine(0, 10);
+    if (imgui.Button('Current##ashitaframes_debuff_reminder_job_current')) then
+        if (current_job ~= 'default') then
+            state.config_debuff_job_key = current_job;
+            selected_job = current_config_debuff_job_key();
+            mark_config_changed();
+        end
+    end
+    imgui.SameLine(0, 8);
+    imgui.TextColored(COLORS.text_muted, ('Now: %s'):fmt(current_job));
+
+    local profile = ensure_target_debuff_reminder_profile(selected_job);
+    render_profile_bool(profile, 'enabled', 'Enable Job Profile', ('target_debuff_reminder_%s_enabled'):fmt(selected_job));
+
+    imgui.TextColored(COLORS.text_muted, 'Debuffs');
+    local any_debuff = false;
+    if (render_profile_target_debuff_toggle(profile, 'dia', 'Dia')) then
+        any_debuff = true;
+    end
+    if (render_profile_target_debuff_toggle(profile, 'paralyze', 'Paralyze')) then
+        any_debuff = true;
+    end
+    if (render_profile_target_debuff_toggle(profile, 'slow', 'Slow')) then
+        any_debuff = true;
+    end
+
+    if (not any_debuff) then
+        imgui.TextColored(COLORS.text_muted, 'No supported target debuffs available for current job/subjob.');
+    else
+        if (target_debuff_list_has(profile.debuffs, 'dia') and not target_debuff_spell_available('dia')) then
+            imgui.TextColored(COLORS.text_muted, 'Dia is configured on but unavailable on current job/subjob.');
+        end
+        if (target_debuff_list_has(profile.debuffs, 'paralyze') and not target_debuff_spell_available('paralyze')) then
+            imgui.TextColored(COLORS.text_muted, 'Paralyze is configured on but unavailable on current job/subjob.');
+        end
+        if (target_debuff_list_has(profile.debuffs, 'slow') and not target_debuff_spell_available('slow')) then
+            imgui.TextColored(COLORS.text_muted, 'Slow is configured on but unavailable on current job/subjob.');
+        end
+    end
+end
+
 local function render_config_window()
     if (not state.config_visible[1]) then
         return;
@@ -1961,85 +3311,13 @@ local function render_config_window()
 
     imgui.SetNextWindowSize({ 430, 0 }, ImGuiCond_FirstUseEver);
     if (imgui.Begin(('AshitaFrames v%s Configuration###AshitaFramesConfig'):fmt(addon.version), state.config_visible, ImGuiWindowFlags_AlwaysAutoResize)) then
-        imgui.TextColored(COLORS.accent, 'Visibility');
-
-        local visible = state.visible[1] == true;
-        if (imgui.Checkbox('Show Frames##ashitaframes_show_frames', { visible })) then
-            state.visible[1] = not visible;
-            state.settings.visible = state.visible[1];
-            mark_config_changed();
-        end
-
-        local locked = state.settings.locked == true;
-        if (imgui.Checkbox('Lock Frames##ashitaframes_lock_frames', { locked })) then
-            state.settings.locked = not locked;
-            mark_config_changed();
-        end
-
-        local show_target = state.settings.show_target == true;
-        if (imgui.Checkbox('Target Frame##ashitaframes_show_target', { show_target })) then
-            state.settings.show_target = not show_target;
-            mark_config_changed();
-        end
-
-        local show_party = state.settings.show_party == true;
-        if (imgui.Checkbox('Party Frame##ashitaframes_show_party', { show_party })) then
-            state.settings.show_party = not show_party;
-            mark_config_changed();
-        end
-
-        local show_alliance = state.settings.show_alliance == true;
-        if (imgui.Checkbox('Alliance Slots##ashitaframes_show_alliance', { show_alliance })) then
-            state.settings.show_alliance = not show_alliance;
-            mark_config_changed();
-        end
-
-        local same_zone_dim = state.settings.same_zone_dim == true;
-        if (imgui.Checkbox('Dim Different Zone##ashitaframes_same_zone_dim', { same_zone_dim })) then
-            state.settings.same_zone_dim = not same_zone_dim;
-            mark_config_changed();
-        end
-
-        local show_buffs = state.settings.show_buffs == true;
-        if (imgui.Checkbox('Party Buffs##ashitaframes_show_buffs', { show_buffs })) then
-            state.settings.show_buffs = not show_buffs;
-            state.settings = normalize_settings(state.settings);
-            mark_config_changed();
-        end
-
-        local show_buff_reminders = state.settings.show_buff_reminders == true;
-        if (imgui.Checkbox('Missing Buff Reminders##ashitaframes_show_buff_reminders', { show_buff_reminders })) then
-            state.settings.show_buff_reminders = not show_buff_reminders;
-            mark_config_changed();
-        end
-
-        render_buff_reminder_config();
+        render_frame_config_tabs();
 
         imgui.Separator();
-        imgui.TextColored(COLORS.accent, 'Layout');
-        render_int_control('Frame Width', 'frame_width', state.settings.frame_width, LIMITS.width_min, LIMITS.width_max, function (value)
-            state.settings.frame_width = clamp_int(value, LIMITS.width_min, LIMITS.width_max);
-            mark_config_changed();
-        end);
-        render_int_control('Base Row Height', 'row_height', state.settings.row_height, LIMITS.row_height_min, LIMITS.row_height_max, function (value)
-            state.settings.row_height = clamp_int(value, LIMITS.row_height_min, LIMITS.row_height_max);
-            mark_config_changed();
-        end);
-        render_int_control('Row Gap', 'row_gap', state.settings.row_gap, LIMITS.row_gap_min, LIMITS.row_gap_max, function (value)
-            state.settings.row_gap = clamp_int(value, LIMITS.row_gap_min, LIMITS.row_gap_max);
-            mark_config_changed();
-        end);
-        render_int_control('Max Buffs', 'max_buffs', state.settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max, function (value)
-            state.settings.max_buffs = clamp_int(value, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
-            mark_config_changed();
-        end, 'buffs');
-        render_int_control('Opacity', 'opacity', state.settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max, function (value)
-            state.settings.opacity = clamp_int(value, LIMITS.opacity_min, LIMITS.opacity_max);
-            mark_config_changed();
-        end, '%');
-
-        imgui.Separator();
-        imgui.Text(('Party pos: %d, %d'):fmt(state.party_window_x, state.party_window_y));
+        local party_layout = party_layout_for_size(state.settings.party_preview_size);
+        imgui.Text(('Self pos: %d, %d'):fmt(state.self_window_x, state.self_window_y));
+        imgui.Text(('Party %d pos: %d, %d'):fmt(party_size(state.settings.party_preview_size), party_layout.x, party_layout.y));
+        imgui.Text(('Pet pos: %d, %d'):fmt(state.pet_window_x, state.pet_window_y));
         imgui.Text(('Target pos: %d, %d'):fmt(state.target_window_x, state.target_window_y));
 
         if (imgui.Button('Save##ashitaframes_config_save')) then
@@ -2105,31 +3383,329 @@ end
 local function print_status()
     local reminder_job = current_player_job_key();
     local reminder_profile = reminder_profile_for_job(reminder_job);
+    local status_party_size = party_size(state.settings.party_preview_size);
+    local status_party_layout = party_layout_for_size(status_party_size);
 
-    log_info(('visible=%s locked=%s target=%s party=%s alliance=%s buffs=%s reminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) target=(%d,%d)'):fmt(
+    log_info(('visible=%s locked=%s self=%s target=%s party=%s pet=%s alliance=%s buffs=%s reminders=%s targetDebuffs=%s targetDebuffReminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d self=(%d,%d %dx%d gap=%d op=%d) partySize=%d party=(%d,%d %dx%d gap=%d op=%d) pet=(%d,%d %dx%d gap=%d op=%d) target=(%d,%d %dx%d gap=%d op=%d)'):fmt(
         tostring(state.visible[1] == true),
         tostring(state.settings.locked == true),
+        tostring(state.settings.show_self == true),
         tostring(state.settings.show_target == true),
         tostring(state.settings.show_party == true),
+        tostring(state.settings.show_pet == true),
         tostring(state.settings.show_alliance == true),
         tostring(state.settings.show_buffs == true),
         tostring(state.settings.show_buff_reminders == true),
+        tostring(state.settings.show_target_debuffs == true),
+        tostring(state.settings.show_target_debuff_reminders == true),
         reminder_job,
         reminder_profile.enabled and 'on' or 'off',
         observed_buff_summary(),
         state.observed_text_events,
         state.observed_log_events,
         state.settings.max_buffs,
-        state.settings.frame_width,
-        state.settings.row_height,
-        state.settings.opacity,
-        state.party_window_x,
-        state.party_window_y,
+        state.self_window_x,
+        state.self_window_y,
+        state.settings.self_frame_width,
+        state.settings.self_row_height,
+        state.settings.self_row_gap,
+        state.settings.self_opacity,
+        status_party_size,
+        status_party_layout.x,
+        status_party_layout.y,
+        status_party_layout.width,
+        status_party_layout.row_height,
+        status_party_layout.row_gap,
+        status_party_layout.opacity,
+        state.pet_window_x,
+        state.pet_window_y,
+        state.settings.pet_frame_width,
+        state.settings.pet_row_height,
+        state.settings.pet_row_gap,
+        state.settings.pet_opacity,
         state.target_window_x,
-        state.target_window_y));
+        state.target_window_y,
+        state.settings.target_frame_width,
+        state.settings.target_row_height,
+        state.settings.target_row_gap,
+        state.settings.target_opacity));
 
     if (state.config_error ~= nil) then
         log_error('Config load warning: ' .. state.config_error);
+    end
+end
+
+local TARGET_DEBUFF_APPLY_MESSAGES = {
+    [2] = true,
+    [236] = true,
+    [237] = true,
+    [252] = true,
+    [268] = true,
+    [271] = true,
+};
+local TARGET_DEBUFF_OFF_MESSAGES = {
+    [64] = true,
+    [159] = true,
+    [168] = true,
+    [204] = true,
+    [206] = true,
+    [321] = true,
+    [322] = true,
+    [341] = true,
+    [342] = true,
+    [343] = true,
+    [344] = true,
+    [350] = true,
+    [378] = true,
+    [531] = true,
+    [647] = true,
+    [805] = true,
+    [806] = true,
+};
+local TARGET_DEBUFF_DEATH_MESSAGES = {
+    [6] = true,
+    [20] = true,
+    [97] = true,
+    [113] = true,
+    [406] = true,
+    [605] = true,
+    [646] = true,
+};
+
+local function local_player_server_id()
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    local party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
+    return party ~= nil and tonumber(safe_read(function () return party:GetMemberServerId(0); end, nil)) or nil;
+end
+
+local function target_debuff_duration_seconds(key, spell_id)
+    key = normalize_target_debuff_key(key);
+    spell_id = tonumber(spell_id);
+    if (spell_id ~= nil and TARGET_DEBUFF_SPELL_DURATIONS[spell_id] ~= nil) then
+        return clamp_int(TARGET_DEBUFF_SPELL_DURATIONS[spell_id], 1, 86400);
+    end
+
+    local definition = key ~= nil and TARGET_DEBUFF_DEFINITIONS[key] or nil;
+    return clamp_int(definition ~= nil and definition.duration_seconds or 120, 1, 86400);
+end
+
+local function set_observed_target_debuff(server_id, key, enabled, spell_id)
+    local target_id = tonumber(server_id);
+    key = normalize_target_debuff_key(key);
+    if (target_id == nil or target_id == 0 or key == nil or target_debuff_id_for_key(key) == nil) then
+        return false;
+    end
+
+    if (enabled == true) then
+        state.observed_target_debuffs[target_id] = state.observed_target_debuffs[target_id] or { };
+        state.observed_target_debuffs[target_id][key] = {
+            status_id = target_debuff_id_for_key(key),
+            spell_id = tonumber(spell_id),
+            expires_at = os.time() + target_debuff_duration_seconds(key, spell_id),
+        };
+        return true;
+    end
+
+    local entry = state.observed_target_debuffs[target_id];
+    if (type(entry) ~= 'table') then
+        return false;
+    end
+
+    entry[key] = nil;
+    if (next(entry) == nil) then
+        state.observed_target_debuffs[target_id] = nil;
+    end
+
+    return true;
+end
+
+function set_observed_target_debuff_name(name, key, enabled, spell_id)
+    local name_key = observed_target_name_key(name);
+    key = normalize_target_debuff_key(key);
+    if (name_key == nil or key == nil or target_debuff_id_for_key(key) == nil) then
+        return false;
+    end
+
+    if (enabled == true) then
+        state.observed_target_debuff_names[name_key] = state.observed_target_debuff_names[name_key] or { };
+        state.observed_target_debuff_names[name_key][key] = {
+            status_id = target_debuff_id_for_key(key),
+            spell_id = tonumber(spell_id),
+            expires_at = os.time() + target_debuff_duration_seconds(key, spell_id),
+        };
+        return true;
+    end
+
+    local entry = state.observed_target_debuff_names[name_key];
+    if (type(entry) ~= 'table') then
+        return false;
+    end
+
+    entry[key] = nil;
+    if (next(entry) == nil) then
+        state.observed_target_debuff_names[name_key] = nil;
+    end
+
+    return true;
+end
+
+function clear_observed_target_debuff_name(name)
+    local name_key = observed_target_name_key(name);
+    if (name_key == nil or state.observed_target_debuff_names[name_key] == nil) then
+        return false;
+    end
+
+    state.observed_target_debuff_names[name_key] = nil;
+    return true;
+end
+
+function clear_observed_target_debuff_name_status(name, status)
+    local key = normalize_target_debuff_key(status);
+    if (key == nil) then
+        return false;
+    end
+
+    return set_observed_target_debuff_name(name, key, false);
+end
+
+local function clear_observed_target_debuff_status(server_id, status_id)
+    local key = target_debuff_key_from_id(status_id);
+    if (key == nil) then
+        return false;
+    end
+
+    return set_observed_target_debuff(server_id, key, false);
+end
+
+local function read_le_uint(data, offset, size)
+    local result = 0;
+    local multiplier = 1;
+    for index = 0, size - 1, 1 do
+        local value = data:byte(offset + index);
+        if (value == nil) then
+            return nil;
+        end
+
+        result = result + (value * multiplier);
+        multiplier = multiplier * 256;
+    end
+
+    return result;
+end
+
+local function parse_action_packet(data)
+    if (type(data) ~= 'string' or data:byte(1) ~= 0x28) then
+        return nil;
+    end
+
+    local bytes = safe_read(function () return data:totable(); end, nil);
+    if (type(bytes) ~= 'table') then
+        return nil;
+    end
+
+    local action = {
+        actor_id = safe_read(function () return ashita.bits.unpack_be(bytes, 40, 32); end, nil),
+        target_count = safe_read(function () return ashita.bits.unpack_be(bytes, 72, 10); end, 0),
+        action_type = safe_read(function () return ashita.bits.unpack_be(bytes, 82, 4); end, nil),
+        param = safe_read(function () return ashita.bits.unpack_be(bytes, 86, 16); end, nil),
+        targets = { },
+    };
+
+    local offset = 150;
+    local target_count = clamp_int(action.target_count or 0, 0, 32);
+    for _ = 1, target_count, 1 do
+        local target = {
+            id = safe_read(function () return ashita.bits.unpack_be(bytes, offset, 32); end, nil),
+            action_count = safe_read(function () return ashita.bits.unpack_be(bytes, offset + 32, 4); end, 0),
+            actions = { },
+        };
+
+        offset = offset + 36;
+        local action_count = clamp_int(target.action_count or 0, 0, 32);
+        for _ = 1, action_count, 1 do
+            local target_action = {
+                param = safe_read(function () return ashita.bits.unpack_be(bytes, offset + 27, 17); end, nil),
+                message = safe_read(function () return ashita.bits.unpack_be(bytes, offset + 44, 10); end, nil),
+                has_add_effect = safe_read(function () return ashita.bits.unpack_be(bytes, offset + 85, 1); end, 0) == 1,
+            };
+
+            offset = offset + 86;
+            if (target_action.has_add_effect) then
+                offset = offset + 37;
+            end
+
+            local has_spike_effect = safe_read(function () return ashita.bits.unpack_be(bytes, offset, 1); end, 0) == 1;
+            offset = offset + 1;
+            if (has_spike_effect) then
+                offset = offset + 34;
+            end
+
+            table.insert(target.actions, target_action);
+        end
+
+        table.insert(action.targets, target);
+    end
+
+    return action;
+end
+
+local function handle_target_debuff_action_packet(data)
+    local action = parse_action_packet(data);
+    local player_id = local_player_server_id();
+    if (action == nil or player_id == nil or tonumber(action.actor_id) ~= player_id or tonumber(action.action_type) ~= 4) then
+        return;
+    end
+
+    local spell_id_value = tonumber(action.param);
+    local key = TARGET_DEBUFF_SPELL_IDS[spell_id_value];
+    if (key == nil) then
+        return;
+    end
+
+    for _, target in ipairs(action.targets or { }) do
+        for _, target_action in ipairs(target.actions or { }) do
+            local message = tonumber(target_action.message);
+            if (TARGET_DEBUFF_APPLY_MESSAGES[message] == true) then
+                set_observed_target_debuff(target.id, key, true, spell_id_value);
+            end
+        end
+    end
+end
+
+local function handle_target_debuff_message_packet(data)
+    if (type(data) ~= 'string') then
+        return;
+    end
+
+    local target_id = read_le_uint(data, 0x09, 4);
+    local param = read_le_uint(data, 0x0D, 4);
+    local message_id = read_le_uint(data, 0x19, 2);
+    if (message_id ~= nil) then
+        message_id = math.fmod(message_id, 32768);
+    end
+
+    if (target_id == nil or message_id == nil) then
+        return;
+    end
+
+    if (TARGET_DEBUFF_DEATH_MESSAGES[message_id] == true) then
+        state.observed_target_debuffs[target_id] = nil;
+    elseif (TARGET_DEBUFF_OFF_MESSAGES[message_id] == true and param ~= nil) then
+        clear_observed_target_debuff_status(target_id, param);
+    end
+end
+
+local function handle_incoming_packet(e)
+    if (e == nil or e.blocked == true) then
+        return;
+    end
+
+    if (e.id == 0x028) then
+        handle_target_debuff_action_packet(e.data_modified or e.data);
+    elseif (e.id == 0x029) then
+        handle_target_debuff_message_packet(e.data_modified or e.data);
+    elseif (e.id == 0x00A) then
+        clear_observed_target_debuffs();
     end
 end
 
@@ -2240,6 +3816,197 @@ local function process_observed_buff_text(message)
     return set_observed_buff(name, key, enabled);
 end
 
+function current_player_name()
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    local party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
+    return party ~= nil and clean_string(safe_read(function () return party:GetMemberName(0); end, '')) or '';
+end
+
+function target_debuff_key_from_spell_name(spell_name)
+    local key = normalize_target_debuff_key(spell_name);
+    if (key ~= nil) then
+        return key;
+    end
+
+    key = clean_string(spell_name):lower():gsub('[%s%-]+', '_');
+    if (key == 'dia_ii' or key == 'dia_iii' or key == 'dia_iv' or key == 'dia_v' or key == 'diaga') then
+        return 'dia';
+    end
+    if (key == 'paralyze_ii') then
+        return 'paralyze';
+    end
+
+    return nil;
+end
+
+function target_debuff_spell_id_from_name(spell_name)
+    local key = clean_string(spell_name):lower():gsub('[%s%-]+', '_');
+    local ids = {
+        dia = 23,
+        dia_ii = 24,
+        dia_iii = 25,
+        dia_iv = 26,
+        dia_v = 27,
+        diaga = 33,
+        paralyze = 58,
+        paralyze_ii = 80,
+        slow = 56,
+        slow_ii = 79,
+    };
+
+    return ids[key];
+end
+
+function set_pending_target_debuff_cast(spell_name, target_name)
+    local key = target_debuff_key_from_spell_name(spell_name);
+    local target_key = observed_target_name_key(target_name);
+    if (key == nil) then
+        return false;
+    end
+
+    state.pending_target_debuff_cast = {
+        key = key,
+        spell_name = clean_string(spell_name),
+        spell_id = target_debuff_spell_id_from_name(spell_name),
+        target_name = clean_string(target_name),
+        target_key = target_key,
+        started_at = os.time(),
+    };
+    return true;
+end
+
+function pending_target_debuff_cast()
+    local pending = state.pending_target_debuff_cast;
+    if (type(pending) ~= 'table') then
+        return nil;
+    end
+
+    if ((os.time() - (tonumber(pending.started_at) or 0)) > 20) then
+        state.pending_target_debuff_cast = nil;
+        return nil;
+    end
+
+    return pending;
+end
+
+function pending_target_matches(name, key)
+    local pending = pending_target_debuff_cast();
+    if (pending == nil or (key ~= nil and pending.key ~= key)) then
+        return nil;
+    end
+
+    if (pending.target_key ~= nil and observed_target_name_key(name) ~= pending.target_key) then
+        return nil;
+    end
+
+    return pending;
+end
+
+function clear_pending_target_debuff_if_matches(name)
+    local pending = pending_target_debuff_cast();
+    if (pending ~= nil and (pending.target_key == nil or observed_target_name_key(name) == pending.target_key)) then
+        state.pending_target_debuff_cast = nil;
+        return true;
+    end
+
+    return false;
+end
+
+function process_observed_target_debuff_text(message)
+    local text = clean_event_message(message);
+    if (#text == 0) then
+        return false;
+    end
+
+    local player = current_player_name();
+    if (#player > 0) then
+        local actor, spell, target = text:match('^(.-) starts casting (.-) on (.-)%.$');
+        if (actor == player and spell ~= nil and target ~= nil) then
+            return set_pending_target_debuff_cast(spell, target);
+        end
+
+        actor, spell = text:match('^(.-) casts (.-)%.$');
+        if (actor == player and spell ~= nil and target_debuff_key_from_spell_name(spell) ~= nil) then
+            local pending = pending_target_debuff_cast();
+            if (pending == nil or target_debuff_key_from_spell_name(spell) ~= pending.key) then
+                return set_pending_target_debuff_cast(spell, nil);
+            end
+
+            pending.spell_name = clean_string(spell);
+            pending.spell_id = target_debuff_spell_id_from_name(spell) or pending.spell_id;
+            pending.started_at = os.time();
+            return true;
+        end
+
+        actor, spell, target = text:match("^(.-)'s (.-) has no effect on (.-)%.$");
+        if (actor == player and spell ~= nil and target ~= nil and clear_pending_target_debuff_if_matches(target)) then
+            return true;
+        end
+
+        if (text == (player .. "'s casting is interrupted.")) then
+            state.pending_target_debuff_cast = nil;
+            return true;
+        end
+    end
+
+    local target, status = text:match("^(.-)'s (.-) effect wears off%.?$");
+    if (target ~= nil and status ~= nil and clear_observed_target_debuff_name_status(target, status)) then
+        return true;
+    end
+
+    target = text:match('^(.-) falls to the ground%.$');
+    if (target ~= nil) then
+        local cleared = clear_observed_target_debuff_name(target);
+        clear_pending_target_debuff_if_matches(target);
+        return cleared;
+    end
+
+    target = text:match('^.- defeats (.-)%.$');
+    if (target ~= nil) then
+        local cleared = clear_observed_target_debuff_name(target);
+        clear_pending_target_debuff_if_matches(target);
+        return cleared;
+    end
+
+    target = text:match('^Unable to see (.-)%.$') or text:match('^You lose sight of (.-)%.$') or text:match('^(.-) is out of range%.$') or text:match('^(.-) is too far away%.$');
+    if (target ~= nil and clear_pending_target_debuff_if_matches(target)) then
+        return true;
+    end
+
+    target = text:match('^(.-) resists the spell%.$');
+    if (target ~= nil and clear_pending_target_debuff_if_matches(target)) then
+        return true;
+    end
+
+    target = text:match('^(.-) takes %d+ points of damage%.$');
+    local pending = pending_target_matches(target, 'dia');
+    if (pending ~= nil) then
+        state.pending_target_debuff_cast = nil;
+        return set_observed_target_debuff_name(target, pending.key, true, pending.spell_id);
+    end
+
+    target = text:match('^(.-) is paralyzed%.$');
+    pending = pending_target_matches(target, 'paralyze');
+    if (pending ~= nil) then
+        state.pending_target_debuff_cast = nil;
+        return set_observed_target_debuff_name(target, pending.key, true, pending.spell_id);
+    end
+
+    target = text:match('^(.-) is slowed%.$');
+    pending = pending_target_matches(target, 'slow');
+    if (pending ~= nil) then
+        state.pending_target_debuff_cast = nil;
+        return set_observed_target_debuff_name(target, pending.key, true, pending.spell_id);
+    end
+
+    return false;
+end
+
+function process_observed_text(message)
+    local handled = process_observed_buff_text(message);
+    return process_observed_target_debuff_text(message) or handled;
+end
+
 local function current_chat_log_path()
     local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
     local party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
@@ -2270,7 +4037,7 @@ local function seed_observed_buffs_from_chat_log()
     local lines = { };
     for line in file:lines() do
         table.insert(lines, line);
-        if (#lines > 500) then
+        if (#lines > OBSERVED_LOG_SEED_MAX_LINES) then
             table.remove(lines, 1);
         end
     end
@@ -2286,7 +4053,7 @@ local function seed_observed_buffs_from_chat_log()
     end
 
     for index = start_index, #lines, 1 do
-        process_observed_buff_text(lines[index]);
+        process_observed_text(lines[index]);
     end
 
     state.observed_log_path = path;
@@ -2327,7 +4094,7 @@ local function poll_observed_buffs_from_chat_log()
 
     file:seek('set', position);
     for line in file:lines() do
-        if (process_observed_buff_text(line)) then
+        if (process_observed_text(line)) then
             state.observed_log_events = state.observed_log_events + 1;
         end
     end
@@ -2348,7 +4115,7 @@ local function handle_text_in(e)
         local text = tostring(message or '');
         if (#text > 0 and seen[text] ~= true) then
             seen[text] = true;
-            if (process_observed_buff_text(text)) then
+            if (process_observed_text(text)) then
                 state.observed_text_events = state.observed_text_events + 1;
                 return;
             end
@@ -2433,8 +4200,13 @@ ashita.events.register('text_in', 'text_in_cb', function (e)
     handle_text_in(e);
 end);
 
+ashita.events.register('incoming_packet', 'incoming_packet_cb', function (e)
+    handle_incoming_packet(e);
+end);
+
 ashita.events.register('d3d_present', 'present_cb', function ()
     poll_observed_buffs_from_chat_log();
+    prune_observed_target_debuffs();
 
     if (not state.visible[1]) then
         render_config_window();
@@ -2442,6 +4214,8 @@ ashita.events.register('d3d_present', 'present_cb', function ()
     end
 
     render_target();
+    render_self();
+    render_pet();
     render_party();
     render_config_window();
 end);
