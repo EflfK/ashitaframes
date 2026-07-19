@@ -442,18 +442,55 @@ function party_size(value)
     return clamp_int(value, 1, 6);
 end
 
+function party_display_count_for_size(size)
+    return math.max(party_size(size) - 1, 0);
+end
+
+function normalize_party_grid_columns(value, size)
+    local max_columns = math.max(party_display_count_for_size(size), 1);
+    return clamp_int(value, 1, max_columns);
+end
+
+function normalize_party_grid_rows(value, size)
+    local max_rows = math.max(party_display_count_for_size(size), 1);
+    return clamp_int(value, 1, max_rows);
+end
+
+function fit_party_grid(layout, size, preserve)
+    layout.columns = normalize_party_grid_columns(layout.columns, size);
+    layout.rows = normalize_party_grid_rows(layout.rows, size);
+
+    local display_count = party_display_count_for_size(size);
+    if (display_count <= 0 or (layout.columns * layout.rows) >= display_count) then
+        return layout;
+    end
+
+    if (preserve == 'rows') then
+        layout.columns = normalize_party_grid_columns(math.ceil(display_count / layout.rows), size);
+    else
+        layout.rows = normalize_party_grid_rows(math.ceil(display_count / layout.columns), size);
+    end
+
+    return layout;
+end
+
 function normalize_party_size_layout(layout, size, settings)
     layout = type(layout) == 'table' and layout or { };
+    local preserve = (layout.rows ~= nil and layout.columns == nil) and 'rows' or 'columns';
 
-    return {
+    local result = {
         x = clamp_int(layout.x or layout.window_x or settings.party_window_x, -2000, 4000),
         y = clamp_int(layout.y or layout.window_y or settings.party_window_y, -2000, 4000),
         width = normalize_frame_width(layout.frame_width or layout.width, settings.party_frame_width),
         row_height = normalize_frame_row_height(layout.row_height, settings.party_row_height),
         row_gap = normalize_frame_row_gap(layout.row_gap, settings.party_row_gap),
         opacity = normalize_frame_opacity(layout.opacity, settings.party_opacity),
+        columns = normalize_party_grid_columns(layout.columns, size),
+        rows = normalize_party_grid_rows(layout.rows, size),
         size = party_size(size),
     };
+
+    return fit_party_grid(result, size, preserve);
 end
 
 function normalize_party_size_layouts(layouts, settings)
@@ -2265,14 +2302,16 @@ end
 function append_party_size_layout_config(lines, size, layout)
     layout = normalize_party_size_layout(layout, size, state.settings);
 
-    table.insert(lines, ('            [%d] = { x = %d, y = %d, frame_width = %d, row_height = %d, row_gap = %d, opacity = %d },'):fmt(
+    table.insert(lines, ('            [%d] = { x = %d, y = %d, frame_width = %d, row_height = %d, row_gap = %d, opacity = %d, columns = %d, rows = %d },'):fmt(
         size,
         layout.x,
         layout.y,
         layout.width,
         layout.row_height,
         layout.row_gap,
-        layout.opacity));
+        layout.opacity,
+        layout.columns,
+        layout.rows));
 end
 
 local function capture_runtime_settings_for_save()
@@ -2998,7 +3037,7 @@ function draw_resource_bars(draw_list, unit, layout, x, y, width, height, hp_col
     end
 end
 
-local function draw_unit_row(unit, layout, row_height)
+local function draw_unit_row(unit, layout, row_height, skip_spacing)
     local x, y = imgui.GetCursorScreenPos();
     local draw_list = imgui.GetWindowDrawList();
     local width = layout.width;
@@ -3034,7 +3073,9 @@ local function draw_unit_row(unit, layout, row_height)
     draw_resource_bars(draw_list, unit, layout, bar_x, bar_y, bar_w, bar_h, hp_color, alpha);
     draw_resource_labels(draw_list, unit, layout, bar_x, label_y, bar_w, alpha);
 
-    imgui.Dummy({ width, row_height + layout.row_gap });
+    if (skip_spacing ~= true) then
+        imgui.Dummy({ width, row_height + layout.row_gap });
+    end
 end
 
 local function effective_row_height(unit, layout)
@@ -3072,6 +3113,65 @@ local function render_window(title, open_state, x, y, layout, units, position_ca
         for _, unit in ipairs(units) do
             draw_unit_row(unit, layout, effective_row_height(unit, layout));
         end
+    end
+
+    imgui.End();
+    imgui.PopStyleColor(2);
+    imgui.PopStyleVar(2);
+end
+
+local function party_grid_size(layout, unit_count)
+    unit_count = math.max(tonumber(unit_count) or 0, 1);
+    local columns = clamp_int(layout.columns, 1, unit_count);
+    local rows = clamp_int(layout.rows, 1, unit_count);
+
+    if ((columns * rows) < unit_count) then
+        rows = math.ceil(unit_count / columns);
+    end
+
+    return columns, rows;
+end
+
+local function render_party_grid_window(title, open_state, x, y, layout, units, position_callback)
+    local settings = state.settings;
+    if (#units == 0) then
+        return;
+    end
+
+    local locked = settings.locked == true;
+    local window_flags = locked and WINDOW_FLAGS_LOCKED or WINDOW_FLAGS_BASE;
+    local pad = locked and 4 or 8;
+    local alpha = layout.opacity / 100;
+    local columns, rows = party_grid_size(layout, #units);
+    local row_height = layout.row_height;
+    for _, unit in ipairs(units) do
+        row_height = math.max(row_height, effective_row_height(unit, layout));
+    end
+
+    local gap = layout.row_gap;
+    local total_width = (columns * layout.width) + ((columns - 1) * gap);
+    local total_height = (rows * row_height) + ((rows - 1) * gap);
+
+    imgui.SetNextWindowPos({ x, y }, locked and ImGuiCond_Always or ImGuiCond_FirstUseEver);
+    imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { pad, pad });
+    imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, locked and 0.0 or 1.0);
+    imgui.PushStyleColor(ImGuiCol_WindowBg, apply_alpha(COLORS.panel_bg, alpha));
+    imgui.PushStyleColor(ImGuiCol_Border, apply_alpha(COLORS.panel_border, alpha));
+
+    if (imgui.Begin(title, open_state, window_flags)) then
+        local current_x, current_y = imgui.GetWindowPos();
+        position_callback(current_x, current_y);
+
+        local start_x, start_y = imgui.GetCursorScreenPos();
+        for index, unit in ipairs(units) do
+            local column = (index - 1) % columns;
+            local row = math.floor((index - 1) / columns);
+            imgui.SetCursorScreenPos({ start_x + (column * (layout.width + gap)), start_y + (row * (row_height + gap)) });
+            draw_unit_row(unit, layout, row_height, true);
+        end
+
+        imgui.SetCursorScreenPos({ start_x, start_y });
+        imgui.Dummy({ total_width, total_height });
     end
 
     imgui.End();
@@ -3138,7 +3238,7 @@ local function render_party()
     end
 
     local layout = party_layout_for_size(size);
-    render_window(
+    render_party_grid_window(
         ('AshitaFrames Party %d###AshitaFramesParty'):fmt(size),
         state.visible,
         layout.x,
@@ -3272,6 +3372,18 @@ function render_party_size_layout_controls()
         layout.opacity = normalize_frame_opacity(value, state.settings.party_opacity);
         mark_config_changed();
     end, '%');
+
+    local max_members = math.max(party_display_count_for_size(size), 1);
+    render_int_control('Columns', ('party_%d_columns'):fmt(size), layout.columns, 1, max_members, function (value)
+        layout.columns = normalize_party_grid_columns(value, size);
+        fit_party_grid(layout, size, 'columns');
+        mark_config_changed();
+    end, 'cols');
+    render_int_control('Rows', ('party_%d_rows'):fmt(size), layout.rows, 1, max_members, function (value)
+        layout.rows = normalize_party_grid_rows(value, size);
+        fit_party_grid(layout, size, 'rows');
+        mark_config_changed();
+    end, 'rows');
 end
 
 function render_general_config_tab()
@@ -3684,7 +3796,7 @@ local function print_status()
     local status_party_size = party_size(state.settings.party_preview_size);
     local status_party_layout = party_layout_for_size(status_party_size);
 
-    log_info(('visible=%s locked=%s self=%s target=%s party=%s pet=%s alliance=%s buffs=%s reminders=%s targetDebuffs=%s targetDebuffReminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d self=(%d,%d %dx%d gap=%d op=%d) partySize=%d party=(%d,%d %dx%d gap=%d op=%d) pet=(%d,%d %dx%d gap=%d op=%d) target=(%d,%d %dx%d gap=%d op=%d)'):fmt(
+    log_info(('visible=%s locked=%s self=%s target=%s party=%s pet=%s alliance=%s buffs=%s reminders=%s targetDebuffs=%s targetDebuffReminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d self=(%d,%d %dx%d gap=%d op=%d) partySize=%d party=(%d,%d %dx%d gap=%d op=%d cols=%d rows=%d) pet=(%d,%d %dx%d gap=%d op=%d) target=(%d,%d %dx%d gap=%d op=%d)'):fmt(
         tostring(state.visible[1] == true),
         tostring(state.settings.locked == true),
         tostring(state.settings.show_self == true),
@@ -3715,6 +3827,8 @@ local function print_status()
         status_party_layout.row_height,
         status_party_layout.row_gap,
         status_party_layout.opacity,
+        status_party_layout.columns,
+        status_party_layout.rows,
         state.pet_window_x,
         state.pet_window_y,
         state.settings.pet_frame_width,
