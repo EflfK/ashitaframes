@@ -14,6 +14,8 @@ return {
         show_tp = true,
         show_buffs = true,
         show_buff_reminders = true,
+        show_target_debuffs = true,
+        show_target_debuff_reminders = true,
         hide_buff_reminders_in_towns = true,
         buff_reminder_suppressed_zone_ids = { },
         max_buffs = 8,
@@ -43,6 +45,13 @@ return {
                 players = true,
                 trusts = true,
                 buffs = { 'protect' },
+            },
+        },
+
+        target_debuff_reminders = {
+            default = {
+                enabled = true,
+                debuffs = { 'dia', 'paralyze' },
             },
         },
     },

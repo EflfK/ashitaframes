@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.10';
+addon.version   = '0.3.12';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -58,6 +58,8 @@ local DEFAULT_SETTINGS = {
     show_tp = true,
     show_buffs = true,
     show_buff_reminders = true,
+    show_target_debuffs = true,
+    show_target_debuff_reminders = true,
     hide_buff_reminders_in_towns = true,
     buff_reminder_suppressed_zone_ids = { },
     max_buffs = 8,
@@ -83,6 +85,12 @@ local DEFAULT_SETTINGS = {
             players = true,
             trusts = true,
             buffs = { 'protect' },
+        },
+    },
+    target_debuff_reminders = {
+        default = {
+            enabled = true,
+            debuffs = { 'dia', 'paralyze' },
         },
     },
 };
@@ -120,6 +128,40 @@ local BUFF_ICON_FILES = {
 local BUFF_DEFINITIONS = {
     protect = { id = 40, label = 'Protect', spell = 'Protect', file = BUFF_ICON_FILES.protect },
     shell = { id = 41, label = 'Shell', spell = 'Shell', file = BUFF_ICON_FILES.shell },
+};
+local TARGET_DEBUFF_DEFINITIONS = {
+    dia = {
+        id = 134,
+        label = 'Dia',
+        spell = 'Dia',
+        spell_ids = { 23, 24, 25, 26, 27, 33 },
+        duration_seconds = 60,
+    },
+    paralyze = {
+        id = 4,
+        label = 'Paralyze',
+        spell = 'Paralyze',
+        spell_ids = { 58, 80 },
+        duration_seconds = 120,
+    },
+};
+local TARGET_DEBUFF_SPELL_IDS = {
+    [23] = 'dia',
+    [24] = 'dia',
+    [25] = 'dia',
+    [26] = 'dia',
+    [27] = 'dia',
+    [33] = 'dia',
+    [58] = 'paralyze',
+    [80] = 'paralyze',
+};
+local TARGET_DEBUFF_STATUS_IDS = {
+    [4] = 'paralyze',
+    [134] = 'dia',
+};
+local TARGET_DEBUFF_REMINDER_PROFILE_DEFAULT = {
+    enabled = true,
+    debuffs = { 'dia', 'paralyze' },
 };
 local BUFF_REMINDER_PROFILE_DEFAULT = {
     enabled = true,
@@ -165,6 +207,7 @@ local LIMITS = {
     width_min = 170,
     width_max = 360,
     row_height_min = 32,
+    target_row_height_with_debuffs_min = 92,
     party_row_height_with_buffs_min = 92,
     row_height_max = 132,
     row_gap_min = 0,
@@ -183,9 +226,12 @@ local state = {
     config_save_message = nil,
     config_save_message_color = nil,
     config_job_key = nil,
+    config_debuff_job_key = nil,
     buff_name_cache = { },
     buff_icon_cache = { },
+    status_icon_cache = { },
     observed_buffs = { },
+    observed_target_debuffs = { },
     observed_buff_zone_id = nil,
     observed_text_events = 0,
     observed_log_path = nil,
@@ -276,8 +322,30 @@ local function normalize_buff_key(value)
     return BUFF_DEFINITIONS[key] ~= nil and key or nil;
 end
 
+local function normalize_target_debuff_key(value)
+    local key = clean_string(value):lower():gsub('[%s%-]+', '_');
+    if (key == 'dia' or key == 'dia_1') then
+        return 'dia';
+    end
+    if (key == 'paralyze' or key == 'paralysis' or key == 'paralyze_1') then
+        return 'paralyze';
+    end
+
+    return TARGET_DEBUFF_DEFINITIONS[key] ~= nil and key or nil;
+end
+
 local function append_buff_key(result, seen, value)
     local key = normalize_buff_key(value);
+    if (key == nil or seen[key]) then
+        return;
+    end
+
+    seen[key] = true;
+    table.insert(result, key);
+end
+
+local function append_target_debuff_key(result, seen, value)
+    local key = normalize_target_debuff_key(value);
     if (key == nil or seen[key]) then
         return;
     end
@@ -301,6 +369,27 @@ local function normalize_buff_list(source)
     for key, value in pairs(source) do
         if (type(key) == 'string' and value == true) then
             append_buff_key(result, seen, key);
+        end
+    end
+
+    return result;
+end
+
+local function normalize_target_debuff_list(source)
+    local result = { };
+    local seen = { };
+
+    if (type(source) ~= 'table') then
+        return result;
+    end
+
+    for _, value in ipairs(source) do
+        append_target_debuff_key(result, seen, value);
+    end
+
+    for key, value in pairs(source) do
+        if (type(key) == 'string' and value == true) then
+            append_target_debuff_key(result, seen, key);
         end
     end
 
@@ -369,6 +458,30 @@ local function normalize_reminder_profile(source, fallback)
     return profile;
 end
 
+local function normalize_target_debuff_reminder_profile(source, fallback)
+    fallback = fallback or TARGET_DEBUFF_REMINDER_PROFILE_DEFAULT;
+
+    local profile = {
+        enabled = fallback.enabled == true,
+        debuffs = copy_buff_list(fallback.debuffs),
+    };
+
+    if (type(source) ~= 'table') then
+        return profile;
+    end
+
+    if (source.enabled ~= nil) then
+        profile.enabled = source.enabled == true;
+    end
+
+    local debuffs = source.debuffs or source.required or source.required_debuffs;
+    if (debuffs ~= nil) then
+        profile.debuffs = normalize_target_debuff_list(debuffs);
+    end
+
+    return profile;
+end
+
 local function normalize_buff_reminders(source)
     local result = { };
     local default_source = nil;
@@ -390,6 +503,33 @@ local function normalize_buff_reminders(source)
         local job = normalize_job_key(key);
         if (job ~= '' and job ~= 'DEFAULT' and type(value) == 'table') then
             result[job] = normalize_reminder_profile(value, result.default);
+        end
+    end
+
+    return result;
+end
+
+local function normalize_target_debuff_reminders(source)
+    local result = { };
+    local default_source = nil;
+
+    if (type(source) == 'table') then
+        default_source = source.default;
+        if (default_source == nil and (source.enabled ~= nil or source.debuffs ~= nil or source.required ~= nil or source.required_debuffs ~= nil)) then
+            default_source = source;
+        end
+    end
+
+    result.default = normalize_target_debuff_reminder_profile(default_source, TARGET_DEBUFF_REMINDER_PROFILE_DEFAULT);
+
+    if (type(source) ~= 'table') then
+        return result;
+    end
+
+    for key, value in pairs(source) do
+        local job = normalize_job_key(key);
+        if (job ~= '' and job ~= 'DEFAULT' and type(value) == 'table') then
+            result[job] = normalize_target_debuff_reminder_profile(value, result.default);
         end
     end
 
@@ -460,6 +600,8 @@ local function normalize_settings(settings)
     settings.show_tp = settings.show_tp ~= false;
     settings.show_buffs = settings.show_buffs ~= false;
     settings.show_buff_reminders = settings.show_buff_reminders ~= false;
+    settings.show_target_debuffs = settings.show_target_debuffs ~= false;
+    settings.show_target_debuff_reminders = settings.show_target_debuff_reminders ~= false;
     settings.hide_buff_reminders_in_towns = settings.hide_buff_reminders_in_towns ~= false;
 
     settings.party_window_x = clamp_int(settings.party_window_x, -2000, 4000);
@@ -472,6 +614,7 @@ local function normalize_settings(settings)
     settings.max_buffs = clamp_int(settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
     settings.opacity = clamp_int(settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max);
     settings.buff_reminders = normalize_buff_reminders(settings.buff_reminders);
+    settings.target_debuff_reminders = normalize_target_debuff_reminders(settings.target_debuff_reminders);
     settings.buff_reminder_suppressed_zone_ids = normalize_zone_id_list(settings.buff_reminder_suppressed_zone_ids);
 
     return settings;
@@ -737,12 +880,76 @@ local function clear_observed_buffs()
     state.observed_buffs = { };
 end
 
+local function clear_observed_target_debuffs()
+    state.observed_target_debuffs = { };
+end
+
+local function target_debuff_id_for_key(key)
+    key = normalize_target_debuff_key(key);
+    local definition = key ~= nil and TARGET_DEBUFF_DEFINITIONS[key] or nil;
+    return definition ~= nil and tonumber(definition.id) or nil;
+end
+
+local function prune_observed_target_debuffs()
+    local now = os.time();
+    for target_id, entry in pairs(state.observed_target_debuffs) do
+        if (type(entry) ~= 'table') then
+            state.observed_target_debuffs[target_id] = nil;
+        else
+            local has_active = false;
+            for key, value in pairs(entry) do
+                if (type(value) ~= 'table' or tonumber(value.expires_at) == nil or value.expires_at <= now) then
+                    entry[key] = nil;
+                else
+                    has_active = true;
+                end
+            end
+
+            if (not has_active) then
+                state.observed_target_debuffs[target_id] = nil;
+            end
+        end
+    end
+end
+
+local function observed_target_debuff_key_lookup(server_id)
+    prune_observed_target_debuffs();
+
+    local target_id = tonumber(server_id);
+    local entry = target_id ~= nil and state.observed_target_debuffs[target_id] or nil;
+    local result = { };
+    if (type(entry) ~= 'table') then
+        return result;
+    end
+
+    for key, value in pairs(entry) do
+        if (type(value) == 'table' and tonumber(value.expires_at) ~= nil and value.expires_at > os.time()) then
+            result[key] = true;
+        end
+    end
+
+    return result;
+end
+
+local function observed_target_debuffs_for_server_id(server_id)
+    local active = observed_target_debuff_key_lookup(server_id);
+    local result = { };
+    local seen = { };
+
+    for key, _ in pairs(active) do
+        append_buff_id(result, seen, target_debuff_id_for_key(key));
+    end
+
+    return result;
+end
+
 local function sync_observed_buffs_for_party(party, self_zone)
     local zone_id = tonumber(self_zone);
     if (zone_id ~= nil) then
         zone_id = math.floor(zone_id + 0.5);
         if (state.observed_buff_zone_id ~= nil and state.observed_buff_zone_id ~= zone_id) then
             clear_observed_buffs();
+            clear_observed_target_debuffs();
         end
         state.observed_buff_zone_id = zone_id;
     end
@@ -839,6 +1046,66 @@ local function load_buff_icon(filename)
     return icon;
 end
 
+local function load_status_icon(status_id)
+    status_id = tonumber(status_id);
+    if (status_id == nil or status_id <= 0 or status_id > 0x3FF) then
+        return nil;
+    end
+
+    if (state.status_icon_cache[status_id] == false) then
+        return nil;
+    end
+    if (state.status_icon_cache[status_id] ~= nil) then
+        return state.status_icon_cache[status_id];
+    end
+
+    local device = ensure_d3d_device();
+    if (device == nil) then
+        return nil;
+    end
+
+    local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
+    local resource = resources ~= nil and safe_read(function () return resources:GetStatusIconByIndex(status_id); end, nil) or nil;
+    if (resource == nil or resource.Bitmap == nil or tonumber(resource.ImageSize) == nil) then
+        state.status_icon_cache[status_id] = false;
+        return nil;
+    end
+
+    local texture_ptr = ffi.new('IDirect3DTexture8*[1]');
+    local result = safe_read(function ()
+        return ffi.C.D3DXCreateTextureFromFileInMemoryEx(
+            device,
+            resource.Bitmap,
+            resource.ImageSize,
+            0xFFFFFFFF,
+            0xFFFFFFFF,
+            1,
+            0,
+            ffi.C.D3DFMT_A8R8G8B8,
+            ffi.C.D3DPOOL_MANAGED,
+            ffi.C.D3DX_DEFAULT,
+            ffi.C.D3DX_DEFAULT,
+            0xFF000000,
+            nil,
+            nil,
+            texture_ptr);
+    end, nil);
+
+    if (result ~= 0 or texture_ptr[0] == nil) then
+        state.status_icon_cache[status_id] = false;
+        return nil;
+    end
+
+    local texture = d3d8.gc_safe_release(ffi.cast('IDirect3DTexture8*', texture_ptr[0]));
+    local icon = {
+        texture = texture,
+        handle = tonumber(ffi.cast('uint32_t', texture)),
+    };
+
+    state.status_icon_cache[status_id] = icon;
+    return icon;
+end
+
 local function buff_key_from_name(name)
     name = clean_string(name):lower();
     if (name:find('protect', 1, true) ~= nil) then
@@ -855,6 +1122,10 @@ local function buff_key_from_id(buff_id)
     return buff_key_from_name(buff_name(buff_id));
 end
 
+local function target_debuff_key_from_id(debuff_id)
+    return TARGET_DEBUFF_STATUS_IDS[tonumber(debuff_id)];
+end
+
 local function active_buff_key_lookup(buffs)
     local lookup = { };
     if (type(buffs) ~= 'table') then
@@ -863,6 +1134,22 @@ local function active_buff_key_lookup(buffs)
 
     for index = 1, #buffs, 1 do
         local key = buff_key_from_id(buffs[index]);
+        if (key ~= nil) then
+            lookup[key] = true;
+        end
+    end
+
+    return lookup;
+end
+
+local function active_target_debuff_key_lookup(debuffs)
+    local lookup = { };
+    if (type(debuffs) ~= 'table') then
+        return lookup;
+    end
+
+    for index = 1, #debuffs, 1 do
+        local key = target_debuff_key_from_id(debuffs[index]);
         if (key ~= nil) then
             lookup[key] = true;
         end
@@ -926,26 +1213,65 @@ local function spell_usable_for_current_job(spell, spell_state)
     return false;
 end
 
-local function reminder_spell_available(key)
-    key = normalize_buff_key(key);
-    local definition = key ~= nil and BUFF_DEFINITIONS[key] or nil;
+local function spell_available_info(definition)
     if (definition == nil or definition.spell == nil) then
-        return false;
+        return nil;
     end
 
     local spell_state = current_player_spell_state();
     if (spell_state == nil or not truthy(spell_state.has_spell_data)) then
-        return false;
+        return nil;
     end
 
     local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
     local spell = resources ~= nil and safe_read(function () return resources:GetSpellByName(definition.spell, 0); end, nil) or nil;
     local id = spell_id(spell);
     if (spell == nil or id == nil or not truthy(safe_read(function () return spell_state.player:HasSpell(id); end, false))) then
+        return nil;
+    end
+
+    if (not spell_usable_for_current_job(spell, spell_state)) then
+        return nil;
+    end
+
+    return {
+        id = id,
+        spell = spell,
+    };
+end
+
+local function reminder_spell_available(key)
+    key = normalize_buff_key(key);
+    local definition = key ~= nil and BUFF_DEFINITIONS[key] or nil;
+    return spell_available_info(definition) ~= nil;
+end
+
+local function target_debuff_spell_available(key)
+    key = normalize_target_debuff_key(key);
+    local definition = key ~= nil and TARGET_DEBUFF_DEFINITIONS[key] or nil;
+    return spell_available_info(definition) ~= nil;
+end
+
+local function spell_recast_timer(spell_id)
+    spell_id = tonumber(spell_id);
+    if (spell_id == nil or spell_id <= 0) then
+        return 0;
+    end
+
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    local recast = memory ~= nil and safe_read(function () return memory:GetRecast(); end, nil) or nil;
+    return recast ~= nil and (tonumber(safe_read(function () return recast:GetSpellTimer(spell_id); end, 0)) or 0) or 0;
+end
+
+local function target_debuff_spell_recast_active(key)
+    key = normalize_target_debuff_key(key);
+    local definition = key ~= nil and TARGET_DEBUFF_DEFINITIONS[key] or nil;
+    local info = spell_available_info(definition);
+    if (info == nil or info.id == nil) then
         return false;
     end
 
-    return spell_usable_for_current_job(spell, spell_state);
+    return spell_recast_timer(info.id) > 0;
 end
 
 local function reminder_profile_for_job(job)
@@ -955,6 +1281,16 @@ local function reminder_profile_for_job(job)
     end
 
     return reminders[job] or reminders.default or BUFF_REMINDER_PROFILE_DEFAULT;
+end
+
+local function target_debuff_reminder_profile_for_job(job)
+    local reminders = state.settings.target_debuff_reminders;
+    if (type(reminders) ~= 'table') then
+        return TARGET_DEBUFF_REMINDER_PROFILE_DEFAULT;
+    end
+
+    job = normalize_job_key(job);
+    return reminders[job] or reminders.default or TARGET_DEBUFF_REMINDER_PROFILE_DEFAULT;
 end
 
 local function ensure_reminder_profile(job)
@@ -977,6 +1313,26 @@ local function ensure_reminder_profile(job)
     return state.settings.buff_reminders[job];
 end
 
+local function ensure_target_debuff_reminder_profile(job)
+    if (type(state.settings.target_debuff_reminders) ~= 'table') then
+        state.settings.target_debuff_reminders = normalize_target_debuff_reminders(nil);
+    end
+    if (type(state.settings.target_debuff_reminders.default) ~= 'table') then
+        state.settings.target_debuff_reminders.default = normalize_target_debuff_reminder_profile(nil, TARGET_DEBUFF_REMINDER_PROFILE_DEFAULT);
+    end
+
+    job = normalize_job_key(job);
+    if (#job == 0 or job == 'DEFAULT') then
+        return state.settings.target_debuff_reminders.default;
+    end
+
+    if (type(state.settings.target_debuff_reminders[job]) ~= 'table') then
+        state.settings.target_debuff_reminders[job] = normalize_target_debuff_reminder_profile(nil, state.settings.target_debuff_reminders.default);
+    end
+
+    return state.settings.target_debuff_reminders[job];
+end
+
 local function buff_list_has(buffs, key)
     key = normalize_buff_key(key);
     if (key == nil or type(buffs) ~= 'table') then
@@ -985,6 +1341,21 @@ local function buff_list_has(buffs, key)
 
     for _, value in ipairs(buffs) do
         if (normalize_buff_key(value) == key) then
+            return true;
+        end
+    end
+
+    return false;
+end
+
+local function target_debuff_list_has(debuffs, key)
+    key = normalize_target_debuff_key(key);
+    if (key == nil or type(debuffs) ~= 'table') then
+        return false;
+    end
+
+    for _, value in ipairs(debuffs) do
+        if (normalize_target_debuff_key(value) == key) then
             return true;
         end
     end
@@ -1019,6 +1390,33 @@ local function set_profile_buff_enabled(profile, key, enabled)
     profile.buffs = result;
 end
 
+local function set_profile_target_debuff_enabled(profile, key, enabled)
+    if (type(profile) ~= 'table') then
+        return;
+    end
+
+    key = normalize_target_debuff_key(key);
+    if (key == nil) then
+        return;
+    end
+
+    local result = { };
+    local seen = { };
+    for _, value in ipairs(profile.debuffs or { }) do
+        local existing = normalize_target_debuff_key(value);
+        if (existing ~= nil and existing ~= key and not seen[existing]) then
+            seen[existing] = true;
+            table.insert(result, existing);
+        end
+    end
+
+    if (enabled == true and not seen[key]) then
+        table.insert(result, key);
+    end
+
+    profile.debuffs = result;
+end
+
 local function unit_reminder_enabled(unit, profile)
     if (unit.same_zone == false or profile.enabled ~= true) then
         return false;
@@ -1047,6 +1445,27 @@ local function reminder_buff_keys(unit)
     for _, key in ipairs(profile.buffs or { }) do
         if (reminder_spell_available(key)) then
             table.insert(result, normalize_buff_key(key));
+        end
+    end
+
+    return result;
+end
+
+local function target_debuff_reminder_keys(unit)
+    if (not state.settings.show_target_debuff_reminders or unit.kind ~= 'target' or unit.target_type ~= 2 or tonumber(unit.server_id) == nil or tonumber(unit.server_id) == 0) then
+        return { };
+    end
+
+    local profile = target_debuff_reminder_profile_for_job(unit.reminder_job or 'default');
+    if (profile.enabled ~= true) then
+        return { };
+    end
+
+    local result = { };
+    for _, key in ipairs(profile.debuffs or { }) do
+        key = normalize_target_debuff_key(key);
+        if (key ~= nil and target_debuff_spell_available(key) and not target_debuff_spell_recast_active(key)) then
+            table.insert(result, key);
         end
     end
 
@@ -1095,6 +1514,57 @@ local function buff_icon_items(unit)
                 name = definition.label,
                 handle = icon.handle,
                 state = 'missing',
+            });
+        end
+    end
+
+    return items;
+end
+
+local function target_debuff_icon_items(unit)
+    local items = { };
+    if (type(unit.debuffs) ~= 'table') then
+        return items;
+    end
+
+    local max_buffs = state.settings.max_buffs or DEFAULT_SETTINGS.max_buffs;
+    local active_keys = active_target_debuff_key_lookup(unit.debuffs);
+
+    for index = 1, #unit.debuffs, 1 do
+        if (#items >= max_buffs) then
+            break;
+        end
+
+        local debuff_id = unit.debuffs[index];
+        local key = target_debuff_key_from_id(debuff_id);
+        local definition = key ~= nil and TARGET_DEBUFF_DEFINITIONS[key] or nil;
+        local icon = definition ~= nil and load_status_icon(definition.id) or nil;
+        if (icon ~= nil) then
+            table.insert(items, {
+                id = debuff_id,
+                key = key,
+                name = buff_name(debuff_id),
+                handle = icon.handle,
+                state = 'active',
+                kind = 'debuff',
+            });
+        end
+    end
+
+    for _, key in ipairs(target_debuff_reminder_keys(unit)) do
+        if (#items >= max_buffs) then
+            break;
+        end
+
+        local definition = TARGET_DEBUFF_DEFINITIONS[key];
+        local icon = definition ~= nil and load_status_icon(definition.id) or nil;
+        if (icon ~= nil and active_keys[key] ~= true) then
+            table.insert(items, {
+                key = key,
+                name = definition.label,
+                handle = icon.handle,
+                state = 'missing',
+                kind = 'debuff',
             });
         end
     end
@@ -1260,6 +1730,28 @@ local function step_config_job(delta)
     mark_config_changed();
 end
 
+local function current_config_debuff_job_key()
+    local current_job = current_player_job_key();
+    if (current_job == 'default') then
+        current_job = 'BST';
+    end
+
+    local selected = normalize_job_key(state.config_debuff_job_key);
+    if (#selected == 0) then
+        selected = current_job;
+    end
+
+    state.config_debuff_job_key = selected;
+    return selected;
+end
+
+local function step_config_debuff_job(delta)
+    local index = job_order_index(current_config_debuff_job_key());
+    index = ((index - 1 + delta) % #JOB_ORDER) + 1;
+    state.config_debuff_job_key = JOB_ORDER[index];
+    mark_config_changed();
+end
+
 local function path_join(left, right)
     left = tostring(left or '');
     right = tostring(right or '');
@@ -1285,6 +1777,20 @@ end
 
 local function buff_list_text(buffs)
     local normalized = normalize_buff_list(buffs);
+    if (#normalized == 0) then
+        return '{ }';
+    end
+
+    local pieces = { };
+    for _, key in ipairs(normalized) do
+        table.insert(pieces, ("'%s'"):fmt(key));
+    end
+
+    return ('{ %s }'):fmt(table.concat(pieces, ', '));
+end
+
+local function target_debuff_list_text(debuffs)
+    local normalized = normalize_target_debuff_list(debuffs);
     if (#normalized == 0) then
         return '{ }';
     end
@@ -1357,6 +1863,15 @@ local function append_profile_config(lines, key, profile)
     table.insert(lines, '            },');
 end
 
+local function append_target_debuff_profile_config(lines, key, profile)
+    profile = normalize_target_debuff_reminder_profile(profile, state.settings.target_debuff_reminders.default);
+
+    table.insert(lines, ('            %s = {'):fmt(config_key_text(key)));
+    table.insert(lines, ('                enabled = %s,'):fmt(bool_text(profile.enabled)));
+    table.insert(lines, ('                debuffs = %s,'):fmt(target_debuff_list_text(profile.debuffs)));
+    table.insert(lines, '            },');
+end
+
 local function capture_runtime_settings_for_save()
     state.settings.visible = state.visible[1] == true;
     state.settings.party_window_x = state.party_window_x;
@@ -1364,6 +1879,7 @@ local function capture_runtime_settings_for_save()
     state.settings.target_window_x = state.target_window_x;
     state.settings.target_window_y = state.target_window_y;
     state.settings.buff_reminders = normalize_buff_reminders(state.settings.buff_reminders);
+    state.settings.target_debuff_reminders = normalize_target_debuff_reminders(state.settings.target_debuff_reminders);
     state.settings.buff_reminder_suppressed_zone_ids = normalize_zone_id_list(state.settings.buff_reminder_suppressed_zone_ids);
 
     return normalize_settings(state.settings);
@@ -1371,6 +1887,7 @@ end
 
 local function config_text_from_settings(settings)
     local reminders = settings.buff_reminders or normalize_buff_reminders(nil);
+    local target_debuff_reminders = settings.target_debuff_reminders or normalize_target_debuff_reminders(nil);
     local lines = {
         'return {',
         '    settings = {',
@@ -1388,6 +1905,8 @@ local function config_text_from_settings(settings)
         ('        show_tp = %s,'):fmt(bool_text(settings.show_tp)),
         ('        show_buffs = %s,'):fmt(bool_text(settings.show_buffs)),
         ('        show_buff_reminders = %s,'):fmt(bool_text(settings.show_buff_reminders)),
+        ('        show_target_debuffs = %s,'):fmt(bool_text(settings.show_target_debuffs)),
+        ('        show_target_debuff_reminders = %s,'):fmt(bool_text(settings.show_target_debuff_reminders)),
         ('        hide_buff_reminders_in_towns = %s,'):fmt(bool_text(settings.hide_buff_reminders_in_towns)),
         ('        buff_reminder_suppressed_zone_ids = %s,'):fmt(zone_id_list_text(settings.buff_reminder_suppressed_zone_ids)),
         ('        max_buffs = %d,'):fmt(settings.max_buffs),
@@ -1407,6 +1926,15 @@ local function config_text_from_settings(settings)
 
     for _, key in ipairs(reminder_profile_keys(reminders)) do
         append_profile_config(lines, key, reminders[key]);
+        table.insert(lines, '');
+    end
+
+    table.insert(lines, '        },');
+    table.insert(lines, '');
+    table.insert(lines, '        target_debuff_reminders = {');
+
+    for _, key in ipairs(reminder_profile_keys(target_debuff_reminders)) do
+        append_target_debuff_profile_config(lines, key, target_debuff_reminders[key]);
         table.insert(lines, '');
     end
 
@@ -1548,16 +2076,26 @@ local function collect_target_unit()
         hp_pct = safe_read(function () return target:GetWindowHPPercent(); end, nil);
     end
 
+    local server_id = safe_read(function () return entity:GetServerId(active_index); end, nil);
+    if (server_id == nil or server_id == 0) then
+        server_id = safe_read(function () return target:GetServerId(0); end, nil);
+    end
+    local target_type = safe_read(function () return entity:GetType(active_index); end, nil);
+
     return {
         kind = 'target',
         tag = is_sub_target_active and 'ST' or 'T',
         index = active_index,
+        server_id = server_id,
+        target_type = target_type,
         name = #name > 0 and name or ('Target %d'):fmt(active_index),
         hp_pct = hp_pct,
         mp_pct = nil,
         tp = nil,
         distance = entity_distance(entity, active_index),
         job = '',
+        reminder_job = current_player_job_key(),
+        debuffs = observed_target_debuffs_for_server_id(server_id),
         same_zone = true,
         dim = false,
     };
@@ -1700,6 +2238,44 @@ local function draw_buff_icon_row(unit, x, y, width, alpha)
     imgui.SetCursorScreenPos({ x, y });
 end
 
+local function draw_target_debuff_icon_row(unit, x, y, width, alpha)
+    if (not state.settings.show_target_debuffs or unit.kind ~= 'target') then
+        return;
+    end
+
+    local items = target_debuff_icon_items(unit);
+    if (#items == 0) then
+        return;
+    end
+
+    local draw_list = imgui.GetWindowDrawList();
+    local tint = unit.dim and { 0.62, 0.62, 0.62, 0.62 } or { 1.00, 1.00, 1.00, 1.00 };
+    local icon_x = x + 8;
+    local icon_y = y + 24;
+    local max_x = x + width - 8;
+
+    for _, item in ipairs(items) do
+        if ((icon_x + BUFF_ICON_SIZE + 3) > max_x) then
+            break;
+        end
+
+        draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint);
+        if (imgui.IsItemHovered()) then
+            imgui.BeginTooltip();
+            if (item.state == 'missing') then
+                imgui.TextColored(COLORS.warning, ('Missing: %s'):fmt(item.name));
+            else
+                imgui.Text(item.name);
+            end
+            imgui.EndTooltip();
+        end
+
+        icon_x = icon_x + BUFF_ICON_SIZE + BUFF_ICON_GAP;
+    end
+
+    imgui.SetCursorScreenPos({ x, y });
+end
+
 local function draw_unit_row(unit, width, row_height)
     local x, y = imgui.GetCursorScreenPos();
     local draw_list = imgui.GetWindowDrawList();
@@ -1730,6 +2306,7 @@ local function draw_unit_row(unit, width, row_height)
     end
 
     draw_buff_icon_row(unit, x, y, width, alpha);
+    draw_target_debuff_icon_row(unit, x, y, width, alpha);
 
     draw_bar(draw_list, bar_x, hp_y, bar_w, 6, unit.hp_pct, hp_color, alpha);
 
@@ -1752,6 +2329,9 @@ end
 local function effective_row_height(unit)
     if (unit.kind == 'party' and state.settings.show_buffs) then
         return math.max(state.settings.row_height, LIMITS.party_row_height_with_buffs_min);
+    end
+    if (unit.kind == 'target' and state.settings.show_target_debuffs and unit.target_type == 2) then
+        return math.max(state.settings.row_height, LIMITS.target_row_height_with_debuffs_min);
     end
 
     return state.settings.row_height;
@@ -1869,6 +2449,20 @@ local function render_profile_buff_toggle(profile, key, label)
     return true;
 end
 
+local function render_profile_target_debuff_toggle(profile, key, label)
+    if (not target_debuff_spell_available(key)) then
+        return false;
+    end
+
+    local enabled = target_debuff_list_has(profile.debuffs, key);
+    if (imgui.Checkbox(('%s##ashitaframes_target_debuff_reminder_%s'):fmt(label, key), { enabled })) then
+        set_profile_target_debuff_enabled(profile, key, not enabled);
+        mark_config_changed();
+    end
+
+    return true;
+end
+
 local function render_buff_reminder_config()
     imgui.Separator();
     imgui.TextColored(COLORS.accent, 'Buff Reminders');
@@ -1954,6 +2548,59 @@ local function render_buff_reminder_config()
     end
 end
 
+local function render_target_debuff_reminder_config()
+    imgui.Separator();
+    imgui.TextColored(COLORS.accent, 'Target Debuff Reminders');
+
+    local current_job = current_player_job_key();
+    local selected_job = current_config_debuff_job_key();
+
+    if (imgui.Button('<##ashitaframes_debuff_reminder_job_prev', { 26, 0 })) then
+        step_config_debuff_job(-1);
+        selected_job = current_config_debuff_job_key();
+    end
+    imgui.SameLine(0, 6);
+    imgui.Text(('Job: %s'):fmt(selected_job));
+    imgui.SameLine(0, 6);
+    if (imgui.Button('>##ashitaframes_debuff_reminder_job_next', { 26, 0 })) then
+        step_config_debuff_job(1);
+        selected_job = current_config_debuff_job_key();
+    end
+    imgui.SameLine(0, 10);
+    if (imgui.Button('Current##ashitaframes_debuff_reminder_job_current')) then
+        if (current_job ~= 'default') then
+            state.config_debuff_job_key = current_job;
+            selected_job = current_config_debuff_job_key();
+            mark_config_changed();
+        end
+    end
+    imgui.SameLine(0, 8);
+    imgui.TextColored(COLORS.text_muted, ('Now: %s'):fmt(current_job));
+
+    local profile = ensure_target_debuff_reminder_profile(selected_job);
+    render_profile_bool(profile, 'enabled', 'Enable Job Profile', ('target_debuff_reminder_%s_enabled'):fmt(selected_job));
+
+    imgui.TextColored(COLORS.text_muted, 'Debuffs');
+    local any_debuff = false;
+    if (render_profile_target_debuff_toggle(profile, 'dia', 'Dia')) then
+        any_debuff = true;
+    end
+    if (render_profile_target_debuff_toggle(profile, 'paralyze', 'Paralyze')) then
+        any_debuff = true;
+    end
+
+    if (not any_debuff) then
+        imgui.TextColored(COLORS.text_muted, 'No supported target debuffs available for current job/subjob.');
+    else
+        if (target_debuff_list_has(profile.debuffs, 'dia') and not target_debuff_spell_available('dia')) then
+            imgui.TextColored(COLORS.text_muted, 'Dia is configured on but unavailable on current job/subjob.');
+        end
+        if (target_debuff_list_has(profile.debuffs, 'paralyze') and not target_debuff_spell_available('paralyze')) then
+            imgui.TextColored(COLORS.text_muted, 'Paralyze is configured on but unavailable on current job/subjob.');
+        end
+    end
+end
+
 local function render_config_window()
     if (not state.config_visible[1]) then
         return;
@@ -2013,7 +2660,20 @@ local function render_config_window()
             mark_config_changed();
         end
 
+        local show_target_debuffs = state.settings.show_target_debuffs == true;
+        if (imgui.Checkbox('Target Debuffs##ashitaframes_show_target_debuffs', { show_target_debuffs })) then
+            state.settings.show_target_debuffs = not show_target_debuffs;
+            mark_config_changed();
+        end
+
+        local show_target_debuff_reminders = state.settings.show_target_debuff_reminders == true;
+        if (imgui.Checkbox('Missing Target Debuffs##ashitaframes_show_target_debuff_reminders', { show_target_debuff_reminders })) then
+            state.settings.show_target_debuff_reminders = not show_target_debuff_reminders;
+            mark_config_changed();
+        end
+
         render_buff_reminder_config();
+        render_target_debuff_reminder_config();
 
         imgui.Separator();
         imgui.TextColored(COLORS.accent, 'Layout');
@@ -2106,7 +2766,7 @@ local function print_status()
     local reminder_job = current_player_job_key();
     local reminder_profile = reminder_profile_for_job(reminder_job);
 
-    log_info(('visible=%s locked=%s target=%s party=%s alliance=%s buffs=%s reminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) target=(%d,%d)'):fmt(
+    log_info(('visible=%s locked=%s target=%s party=%s alliance=%s buffs=%s reminders=%s targetDebuffs=%s targetDebuffReminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) target=(%d,%d)'):fmt(
         tostring(state.visible[1] == true),
         tostring(state.settings.locked == true),
         tostring(state.settings.show_target == true),
@@ -2114,6 +2774,8 @@ local function print_status()
         tostring(state.settings.show_alliance == true),
         tostring(state.settings.show_buffs == true),
         tostring(state.settings.show_buff_reminders == true),
+        tostring(state.settings.show_target_debuffs == true),
+        tostring(state.settings.show_target_debuff_reminders == true),
         reminder_job,
         reminder_profile.enabled and 'on' or 'off',
         observed_buff_summary(),
@@ -2130,6 +2792,252 @@ local function print_status()
 
     if (state.config_error ~= nil) then
         log_error('Config load warning: ' .. state.config_error);
+    end
+end
+
+local TARGET_DEBUFF_APPLY_MESSAGES = {
+    [2] = true,
+    [160] = true,
+    [164] = true,
+    [166] = true,
+    [186] = true,
+    [194] = true,
+    [203] = true,
+    [205] = true,
+    [230] = true,
+    [236] = true,
+    [237] = true,
+    [252] = true,
+    [264] = true,
+    [265] = true,
+    [266] = true,
+    [267] = true,
+    [268] = true,
+    [269] = true,
+    [271] = true,
+    [272] = true,
+    [277] = true,
+    [278] = true,
+    [279] = true,
+    [280] = true,
+    [319] = true,
+    [320] = true,
+    [375] = true,
+    [412] = true,
+    [645] = true,
+    [754] = true,
+    [755] = true,
+    [804] = true,
+};
+local TARGET_DEBUFF_OFF_MESSAGES = {
+    [64] = true,
+    [159] = true,
+    [168] = true,
+    [204] = true,
+    [206] = true,
+    [321] = true,
+    [322] = true,
+    [341] = true,
+    [342] = true,
+    [343] = true,
+    [344] = true,
+    [350] = true,
+    [378] = true,
+    [531] = true,
+    [647] = true,
+    [805] = true,
+    [806] = true,
+};
+local TARGET_DEBUFF_DEATH_MESSAGES = {
+    [6] = true,
+    [20] = true,
+    [97] = true,
+    [113] = true,
+    [406] = true,
+    [605] = true,
+    [646] = true,
+};
+
+local function local_player_server_id()
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    local party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
+    return party ~= nil and tonumber(safe_read(function () return party:GetMemberServerId(0); end, nil)) or nil;
+end
+
+local function target_debuff_duration_seconds(key)
+    key = normalize_target_debuff_key(key);
+    local definition = key ~= nil and TARGET_DEBUFF_DEFINITIONS[key] or nil;
+    return clamp_int(definition ~= nil and definition.duration_seconds or 120, 1, 86400);
+end
+
+local function set_observed_target_debuff(server_id, key, enabled, spell_id)
+    local target_id = tonumber(server_id);
+    key = normalize_target_debuff_key(key);
+    if (target_id == nil or target_id == 0 or key == nil or target_debuff_id_for_key(key) == nil) then
+        return false;
+    end
+
+    if (enabled == true) then
+        state.observed_target_debuffs[target_id] = state.observed_target_debuffs[target_id] or { };
+        state.observed_target_debuffs[target_id][key] = {
+            status_id = target_debuff_id_for_key(key),
+            spell_id = tonumber(spell_id),
+            expires_at = os.time() + target_debuff_duration_seconds(key),
+        };
+        return true;
+    end
+
+    local entry = state.observed_target_debuffs[target_id];
+    if (type(entry) ~= 'table') then
+        return false;
+    end
+
+    entry[key] = nil;
+    if (next(entry) == nil) then
+        state.observed_target_debuffs[target_id] = nil;
+    end
+
+    return true;
+end
+
+local function clear_observed_target_debuff_status(server_id, status_id)
+    local key = target_debuff_key_from_id(status_id);
+    if (key == nil) then
+        return false;
+    end
+
+    return set_observed_target_debuff(server_id, key, false);
+end
+
+local function read_le_uint(data, offset, size)
+    local result = 0;
+    local multiplier = 1;
+    for index = 0, size - 1, 1 do
+        local value = data:byte(offset + index + 1);
+        if (value == nil) then
+            return nil;
+        end
+
+        result = result + (value * multiplier);
+        multiplier = multiplier * 256;
+    end
+
+    return result;
+end
+
+local function parse_action_packet(data)
+    if (type(data) ~= 'string' or data:byte(1) ~= 0x28) then
+        return nil;
+    end
+
+    local bytes = safe_read(function () return data:totable(); end, nil);
+    if (type(bytes) ~= 'table') then
+        return nil;
+    end
+
+    local action = {
+        actor_id = safe_read(function () return ashita.bits.unpack_be(bytes, 40, 32); end, nil),
+        target_count = safe_read(function () return ashita.bits.unpack_be(bytes, 72, 10); end, 0),
+        action_type = safe_read(function () return ashita.bits.unpack_be(bytes, 82, 4); end, nil),
+        param = safe_read(function () return ashita.bits.unpack_be(bytes, 86, 16); end, nil),
+        targets = { },
+    };
+
+    local offset = 150;
+    local target_count = clamp_int(action.target_count or 0, 0, 32);
+    for _ = 1, target_count, 1 do
+        local target = {
+            id = safe_read(function () return ashita.bits.unpack_be(bytes, offset, 32); end, nil),
+            action_count = safe_read(function () return ashita.bits.unpack_be(bytes, offset + 32, 4); end, 0),
+            actions = { },
+        };
+
+        offset = offset + 36;
+        local action_count = clamp_int(target.action_count or 0, 0, 32);
+        for _ = 1, action_count, 1 do
+            local target_action = {
+                param = safe_read(function () return ashita.bits.unpack_be(bytes, offset + 27, 17); end, nil),
+                message = safe_read(function () return ashita.bits.unpack_be(bytes, offset + 44, 10); end, nil),
+                has_add_effect = safe_read(function () return ashita.bits.unpack_be(bytes, offset + 85, 1); end, 0) == 1,
+            };
+
+            offset = offset + 86;
+            if (target_action.has_add_effect) then
+                offset = offset + 37;
+            end
+
+            local has_spike_effect = safe_read(function () return ashita.bits.unpack_be(bytes, offset, 1); end, 0) == 1;
+            offset = offset + 1;
+            if (has_spike_effect) then
+                offset = offset + 34;
+            end
+
+            table.insert(target.actions, target_action);
+        end
+
+        table.insert(action.targets, target);
+    end
+
+    return action;
+end
+
+local function handle_target_debuff_action_packet(data)
+    local action = parse_action_packet(data);
+    local player_id = local_player_server_id();
+    if (action == nil or player_id == nil or tonumber(action.actor_id) ~= player_id or tonumber(action.action_type) ~= 4) then
+        return;
+    end
+
+    local spell_id_value = tonumber(action.param);
+    local key = TARGET_DEBUFF_SPELL_IDS[spell_id_value];
+    if (key == nil) then
+        return;
+    end
+
+    for _, target in ipairs(action.targets or { }) do
+        for _, target_action in ipairs(target.actions or { }) do
+            local message = tonumber(target_action.message);
+            if (TARGET_DEBUFF_APPLY_MESSAGES[message] == true) then
+                set_observed_target_debuff(target.id, key, true, spell_id_value);
+            end
+        end
+    end
+end
+
+local function handle_target_debuff_message_packet(data)
+    if (type(data) ~= 'string') then
+        return;
+    end
+
+    local target_id = read_le_uint(data, 0x09, 4);
+    local param = read_le_uint(data, 0x0D, 4);
+    local message_id = read_le_uint(data, 0x19, 2);
+    if (message_id ~= nil) then
+        message_id = math.fmod(message_id, 32768);
+    end
+
+    if (target_id == nil or message_id == nil) then
+        return;
+    end
+
+    if (TARGET_DEBUFF_DEATH_MESSAGES[message_id] == true) then
+        state.observed_target_debuffs[target_id] = nil;
+    elseif (TARGET_DEBUFF_OFF_MESSAGES[message_id] == true and param ~= nil) then
+        clear_observed_target_debuff_status(target_id, param);
+    end
+end
+
+local function handle_incoming_packet(e)
+    if (e == nil or e.blocked == true) then
+        return;
+    end
+
+    if (e.id == 0x028) then
+        handle_target_debuff_action_packet(e.data_modified or e.data);
+    elseif (e.id == 0x029) then
+        handle_target_debuff_message_packet(e.data_modified or e.data);
+    elseif (e.id == 0x00A) then
+        clear_observed_target_debuffs();
     end
 end
 
@@ -2433,8 +3341,13 @@ ashita.events.register('text_in', 'text_in_cb', function (e)
     handle_text_in(e);
 end);
 
+ashita.events.register('incoming_packet', 'incoming_packet_cb', function (e)
+    handle_incoming_packet(e);
+end);
+
 ashita.events.register('d3d_present', 'present_cb', function ()
     poll_observed_buffs_from_chat_log();
+    prune_observed_target_debuffs();
 
     if (not state.visible[1]) then
         render_config_window();

@@ -27,9 +27,12 @@ clean while important unit information remains visible elsewhere on screen.
   observed state, and a bounded live chat-log tail keeps trust buffs updated
   after reloads and new casts.
   Protect and Shell are mapped first.
+- Shows target-frame icons for owned mapped debuffs and flashes missing
+  target-debuff reminders only when the spell is learned, usable by the current
+  main/sub job, and off cooldown. Dia and Paralyze are mapped first.
 - Includes a persistent in-game configuration window for visibility, locking,
-  sizing, opacity, party buff display, missing-buff reminders, and alliance
-  display.
+  sizing, opacity, party buff display, target debuff display, missing-buff
+  reminders, and alliance display.
 - Provides local UI commands only. It does not target, cast, click-cast, send
   gameplay commands, inject packets, write memory, or automate actions.
 
@@ -109,11 +112,14 @@ Open the in-game configuration window:
 
 The Buff Reminders section lets you pick a main-job profile, enable reminders
 for that job, choose self/player/trust targets, and toggle Protect or Shell.
+The Target Debuff Reminders section lets you pick a main-job profile and toggle
+Dia or Paralyze reminders for the target frame.
 Use Save to write the current window layout and reminder settings to
 `ashitaframes_config.lua`. Reminder options are filtered to spells your current
 main/sub job can actually cast and that your character has learned. Missing
-reminder flashes are hidden in towns by default; the config window can also
-suppress or allow the current non-town zone.
+target-debuff reminders are also hidden while the spell is on cooldown. Missing
+party-buff reminder flashes are hidden in towns by default; the config window
+can also suppress or allow the current non-town zone.
 
 Manual config is still supported:
 
@@ -140,6 +146,8 @@ return {
         show_tp = true,
         show_buffs = true,
         show_buff_reminders = true,
+        show_target_debuffs = true,
+        show_target_debuff_reminders = true,
         hide_buff_reminders_in_towns = true,
         buff_reminder_suppressed_zone_ids = { },
         max_buffs = 8,
@@ -169,6 +177,13 @@ return {
                 buffs = { 'protect' },
             },
         },
+
+        target_debuff_reminders = {
+            default = {
+                enabled = true,
+                debuffs = { 'dia', 'paralyze' },
+            },
+        },
     },
 }
 ```
@@ -182,6 +197,12 @@ current main/sub job.
 `hide_buff_reminders_in_towns` hides missing-buff flashes in town and safe hub
 zones. Add zone ids to `buff_reminder_suppressed_zone_ids` to hide missing
 reminders in additional zones.
+
+`target_debuff_reminders` is keyed by your current main job. Supported target
+debuff reminder keys are currently `dia` and `paralyze`; configured reminders
+only display on attackable targets when the spell is learned, usable on your
+current main/sub job, and not on cooldown. Active target debuff icons are owned
+state observed from local player casts.
 
 ## Development
 
