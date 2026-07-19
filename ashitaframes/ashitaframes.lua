@@ -3482,6 +3482,7 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
     local border = unit.kind == 'target' and COLORS.row_border_active or COLORS.row_border;
     local hp = percent_value(unit.hp_pct);
     local hp_color = hp ~= nil and hp <= 35 and COLORS.hp_low or COLORS.hp;
+    local hp_background_percent = unit.category == 'self' and 100 or unit.hp_pct;
     local bar_x = x + 8;
     local bar_w = width - 16;
     local bar_h = 14;
@@ -3494,7 +3495,7 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
     local text_color = unit.dim and COLORS.text_dim or COLORS.text;
 
     draw_list:AddRectFilled({ x, y }, { x + width, y + row_height }, color_u32(apply_alpha(row_bg, alpha)), 4.0);
-    draw_hp_background(draw_list, x, y, width, row_height, unit.hp_pct, hp_color, alpha);
+    draw_hp_background(draw_list, x, y, width, row_height, hp_background_percent, hp_color, alpha);
     draw_list:AddRect({ x, y }, { x + width, y + row_height }, color_u32(apply_alpha(border, alpha)), 4.0, ImDrawCornerFlags_All, 1.0);
 
     draw_text(draw_list, x + 8, y + 5, COLORS.accent, unit.tag or '');
