@@ -112,10 +112,11 @@ Open the in-game configuration window:
 /ashitaframes config
 ```
 
-The Buff Reminders section lets you pick a main-job profile, enable reminders
-for that job, choose self/player/trust targets, and toggle Protect or Shell.
-The Target Debuff Reminders section lets you pick a main-job profile and toggle
-Dia, Paralyze, or Slow reminders for the target frame.
+The configuration window is organized into General, Party, Pet, and Target
+tabs. The Party, Pet, and Target tabs each include that frame's persisted
+on/off toggle (`show_party`, `show_pet`, or `show_target`) plus its layout
+controls. The Party tab includes Protect/Shell reminders. The Target tab
+includes Dia, Paralyze, and Slow reminders.
 Use Save to write the current window layout and reminder settings to
 `ashitaframes_config.lua`. Party, Pet, and Target frame width, base row height,
 row gap, and opacity are configured independently. Party frame layout is also

@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.21';
+addon.version   = '0.3.22';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -2909,6 +2909,131 @@ function render_party_size_layout_controls()
     end, '%');
 end
 
+function render_general_config_tab()
+    imgui.TextColored(COLORS.accent, 'Global');
+
+    local visible = state.visible[1] == true;
+    if (imgui.Checkbox('Show Frames##ashitaframes_show_frames', { visible })) then
+        state.visible[1] = not visible;
+        state.settings.visible = state.visible[1];
+        mark_config_changed();
+    end
+
+    local locked = state.settings.locked == true;
+    if (imgui.Checkbox('Lock Frames##ashitaframes_lock_frames', { locked })) then
+        state.settings.locked = not locked;
+        mark_config_changed();
+    end
+
+    render_int_control('Max Buffs', 'max_buffs', state.settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max, function (value)
+        state.settings.max_buffs = clamp_int(value, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
+        mark_config_changed();
+    end, 'buffs');
+end
+
+function render_party_frame_config_tab()
+    local show_party = state.settings.show_party == true;
+    if (imgui.Checkbox('Show Party Frame##ashitaframes_show_party', { show_party })) then
+        state.settings.show_party = not show_party;
+        mark_config_changed();
+    end
+
+    local show_alliance = state.settings.show_alliance == true;
+    if (imgui.Checkbox('Alliance Slots##ashitaframes_show_alliance', { show_alliance })) then
+        state.settings.show_alliance = not show_alliance;
+        mark_config_changed();
+    end
+
+    local same_zone_dim = state.settings.same_zone_dim == true;
+    if (imgui.Checkbox('Dim Different Zone##ashitaframes_same_zone_dim', { same_zone_dim })) then
+        state.settings.same_zone_dim = not same_zone_dim;
+        mark_config_changed();
+    end
+
+    local show_buffs = state.settings.show_buffs == true;
+    if (imgui.Checkbox('Party Buffs##ashitaframes_show_buffs', { show_buffs })) then
+        state.settings.show_buffs = not show_buffs;
+        state.settings = normalize_settings(state.settings);
+        mark_config_changed();
+    end
+
+    local show_buff_reminders = state.settings.show_buff_reminders == true;
+    if (imgui.Checkbox('Missing Buff Reminders##ashitaframes_show_buff_reminders', { show_buff_reminders })) then
+        state.settings.show_buff_reminders = not show_buff_reminders;
+        mark_config_changed();
+    end
+
+    imgui.Separator();
+    render_party_size_layout_controls();
+    imgui.Separator();
+    render_buff_reminder_config();
+end
+
+function render_pet_frame_config_tab()
+    local show_pet = state.settings.show_pet == true;
+    if (imgui.Checkbox('Show Pet Frame##ashitaframes_show_pet', { show_pet })) then
+        state.settings.show_pet = not show_pet;
+        mark_config_changed();
+    end
+
+    imgui.Separator();
+    render_frame_layout_controls('pet', 'Pet Frame');
+end
+
+function render_target_frame_config_tab()
+    local show_target = state.settings.show_target == true;
+    if (imgui.Checkbox('Show Target Frame##ashitaframes_show_target', { show_target })) then
+        state.settings.show_target = not show_target;
+        mark_config_changed();
+    end
+
+    local show_empty_target = state.settings.show_empty_target == true;
+    if (imgui.Checkbox('Show Empty Target##ashitaframes_show_empty_target', { show_empty_target })) then
+        state.settings.show_empty_target = not show_empty_target;
+        mark_config_changed();
+    end
+
+    local show_target_debuffs = state.settings.show_target_debuffs == true;
+    if (imgui.Checkbox('Target Debuffs##ashitaframes_show_target_debuffs', { show_target_debuffs })) then
+        state.settings.show_target_debuffs = not show_target_debuffs;
+        mark_config_changed();
+    end
+
+    local show_target_debuff_reminders = state.settings.show_target_debuff_reminders == true;
+    if (imgui.Checkbox('Missing Target Debuffs##ashitaframes_show_target_debuff_reminders', { show_target_debuff_reminders })) then
+        state.settings.show_target_debuff_reminders = not show_target_debuff_reminders;
+        mark_config_changed();
+    end
+
+    imgui.Separator();
+    render_frame_layout_controls('target', 'Target Frame');
+    imgui.Separator();
+    render_target_debuff_reminder_config();
+end
+
+function render_frame_config_tabs()
+    if (imgui.BeginTabBar('##ashitaframes_config_tabs', ImGuiTabBarFlags_NoCloseWithMiddleMouseButton)) then
+        if (imgui.BeginTabItem('General##ashitaframes_config_general', nil)) then
+            render_general_config_tab();
+            imgui.EndTabItem();
+        end
+        if (imgui.BeginTabItem('Party##ashitaframes_config_party', nil)) then
+            render_party_frame_config_tab();
+            imgui.EndTabItem();
+        end
+        if (imgui.BeginTabItem('Pet##ashitaframes_config_pet', nil)) then
+            render_pet_frame_config_tab();
+            imgui.EndTabItem();
+        end
+        if (imgui.BeginTabItem('Target##ashitaframes_config_target', nil)) then
+            render_target_frame_config_tab();
+            imgui.EndTabItem();
+        end
+
+        imgui.EndTabBar();
+    end
+end
+
 local function render_profile_bool(profile, field, label, id)
     local value = profile[field] == true;
     if (imgui.Checkbox(('%s##ashitaframes_%s'):fmt(label, id), { value })) then
@@ -2945,7 +3070,7 @@ local function render_profile_target_debuff_toggle(profile, key, label)
     return true;
 end
 
-local function render_buff_reminder_config()
+function render_buff_reminder_config()
     imgui.Separator();
     imgui.TextColored(COLORS.accent, 'Buff Reminders');
 
@@ -3030,7 +3155,7 @@ local function render_buff_reminder_config()
     end
 end
 
-local function render_target_debuff_reminder_config()
+function render_target_debuff_reminder_config()
     imgui.Separator();
     imgui.TextColored(COLORS.accent, 'Target Debuff Reminders');
 
@@ -3096,91 +3221,7 @@ local function render_config_window()
 
     imgui.SetNextWindowSize({ 430, 0 }, ImGuiCond_FirstUseEver);
     if (imgui.Begin(('AshitaFrames v%s Configuration###AshitaFramesConfig'):fmt(addon.version), state.config_visible, ImGuiWindowFlags_AlwaysAutoResize)) then
-        imgui.TextColored(COLORS.accent, 'Visibility');
-
-        local visible = state.visible[1] == true;
-        if (imgui.Checkbox('Show Frames##ashitaframes_show_frames', { visible })) then
-            state.visible[1] = not visible;
-            state.settings.visible = state.visible[1];
-            mark_config_changed();
-        end
-
-        local locked = state.settings.locked == true;
-        if (imgui.Checkbox('Lock Frames##ashitaframes_lock_frames', { locked })) then
-            state.settings.locked = not locked;
-            mark_config_changed();
-        end
-
-        local show_target = state.settings.show_target == true;
-        if (imgui.Checkbox('Target Frame##ashitaframes_show_target', { show_target })) then
-            state.settings.show_target = not show_target;
-            mark_config_changed();
-        end
-
-        local show_party = state.settings.show_party == true;
-        if (imgui.Checkbox('Party Frame##ashitaframes_show_party', { show_party })) then
-            state.settings.show_party = not show_party;
-            mark_config_changed();
-        end
-
-        local show_pet = state.settings.show_pet == true;
-        if (imgui.Checkbox('Pet Frame##ashitaframes_show_pet', { show_pet })) then
-            state.settings.show_pet = not show_pet;
-            mark_config_changed();
-        end
-
-        local show_alliance = state.settings.show_alliance == true;
-        if (imgui.Checkbox('Alliance Slots##ashitaframes_show_alliance', { show_alliance })) then
-            state.settings.show_alliance = not show_alliance;
-            mark_config_changed();
-        end
-
-        local same_zone_dim = state.settings.same_zone_dim == true;
-        if (imgui.Checkbox('Dim Different Zone##ashitaframes_same_zone_dim', { same_zone_dim })) then
-            state.settings.same_zone_dim = not same_zone_dim;
-            mark_config_changed();
-        end
-
-        local show_buffs = state.settings.show_buffs == true;
-        if (imgui.Checkbox('Party Buffs##ashitaframes_show_buffs', { show_buffs })) then
-            state.settings.show_buffs = not show_buffs;
-            state.settings = normalize_settings(state.settings);
-            mark_config_changed();
-        end
-
-        local show_buff_reminders = state.settings.show_buff_reminders == true;
-        if (imgui.Checkbox('Missing Buff Reminders##ashitaframes_show_buff_reminders', { show_buff_reminders })) then
-            state.settings.show_buff_reminders = not show_buff_reminders;
-            mark_config_changed();
-        end
-
-        local show_target_debuffs = state.settings.show_target_debuffs == true;
-        if (imgui.Checkbox('Target Debuffs##ashitaframes_show_target_debuffs', { show_target_debuffs })) then
-            state.settings.show_target_debuffs = not show_target_debuffs;
-            mark_config_changed();
-        end
-
-        local show_target_debuff_reminders = state.settings.show_target_debuff_reminders == true;
-        if (imgui.Checkbox('Missing Target Debuffs##ashitaframes_show_target_debuff_reminders', { show_target_debuff_reminders })) then
-            state.settings.show_target_debuff_reminders = not show_target_debuff_reminders;
-            mark_config_changed();
-        end
-
-        render_buff_reminder_config();
-        render_target_debuff_reminder_config();
-
-        imgui.Separator();
-        imgui.TextColored(COLORS.accent, 'Layout');
-        render_party_size_layout_controls();
-        imgui.Separator();
-        render_frame_layout_controls('pet', 'Pet Frame');
-        imgui.Separator();
-        render_frame_layout_controls('target', 'Target Frame');
-        imgui.Separator();
-        render_int_control('Max Buffs', 'max_buffs', state.settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max, function (value)
-            state.settings.max_buffs = clamp_int(value, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
-            mark_config_changed();
-        end, 'buffs');
+        render_frame_config_tabs();
 
         imgui.Separator();
         local party_layout = party_layout_for_size(state.settings.party_preview_size);
