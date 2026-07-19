@@ -1052,6 +1052,17 @@ function estimate_resource_max(current, percent)
     return estimated;
 end
 
+function resource_percent_from_pair(current, max)
+    current = resource_current_value(current);
+    max = resource_current_value(max);
+
+    if (current == nil or max == nil or max <= 0) then
+        return nil;
+    end
+
+    return clamp((current / max) * 100, 0, 100);
+end
+
 local function entity_distance(entity, index)
     if (entity == nil or index == nil or index <= 0) then
         return nil;
@@ -2841,13 +2852,25 @@ local function party_member_unit(party, index, self_zone, reminder_job, reminder
         return nil;
     end
 
+    local player = index == 0 and safe_read(function () return AshitaCore:GetMemoryManager():GetPlayer(); end, nil) or nil;
     local hp_pct = safe_read(function () return party:GetMemberHPPercent(index); end, nil);
     local mp_pct = safe_read(function () return party:GetMemberMPPercent(index); end, nil);
     local hp = resource_current_value(safe_read(function () return party:GetMemberHP(index); end, nil));
     local mp = resource_current_value(safe_read(function () return party:GetMemberMP(index); end, nil));
-    local player = index == 0 and safe_read(function () return AshitaCore:GetMemoryManager():GetPlayer(); end, nil) or nil;
-    local hp_max = player ~= nil and resource_current_value(safe_read(function () return player:GetHPMax(); end, nil)) or estimate_resource_max(hp, hp_pct);
-    local mp_max = player ~= nil and resource_current_value(safe_read(function () return player:GetMPMax(); end, nil)) or estimate_resource_max(mp, mp_pct);
+    local hp_max = nil;
+    local mp_max = nil;
+
+    if (player ~= nil) then
+        hp = resource_current_value(safe_read(function () return player:GetHP(); end, nil)) or hp;
+        mp = resource_current_value(safe_read(function () return player:GetMP(); end, nil)) or mp;
+        hp_max = resource_current_value(safe_read(function () return player:GetHPMax(); end, nil));
+        mp_max = resource_current_value(safe_read(function () return player:GetMPMax(); end, nil));
+        hp_pct = percent_value(safe_read(function () return player:GetHPP(); end, nil)) or resource_percent_from_pair(hp, hp_max) or hp_pct;
+        mp_pct = percent_value(safe_read(function () return player:GetMPP(); end, nil)) or resource_percent_from_pair(mp, mp_max) or mp_pct;
+    end
+
+    hp_max = hp_max or estimate_resource_max(hp, hp_pct);
+    mp_max = mp_max or estimate_resource_max(mp, mp_pct);
 
     return {
         kind = 'party',
@@ -3459,6 +3482,7 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
     local border = unit.kind == 'target' and COLORS.row_border_active or COLORS.row_border;
     local hp = percent_value(unit.hp_pct);
     local hp_color = hp ~= nil and hp <= 35 and COLORS.hp_low or COLORS.hp;
+    local hp_background_percent = unit.category == 'self' and 100 or unit.hp_pct;
     local bar_x = x + 8;
     local bar_w = width - 16;
     local bar_h = 14;
@@ -3471,7 +3495,7 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
     local text_color = unit.dim and COLORS.text_dim or COLORS.text;
 
     draw_list:AddRectFilled({ x, y }, { x + width, y + row_height }, color_u32(apply_alpha(row_bg, alpha)), 4.0);
-    draw_hp_background(draw_list, x, y, width, row_height, unit.hp_pct, hp_color, alpha);
+    draw_hp_background(draw_list, x, y, width, row_height, hp_background_percent, hp_color, alpha);
     draw_list:AddRect({ x, y }, { x + width, y + row_height }, color_u32(apply_alpha(border, alpha)), 4.0, ImDrawCornerFlags_All, 1.0);
 
     draw_text(draw_list, x + 8, y + 5, COLORS.accent, unit.tag or '');
