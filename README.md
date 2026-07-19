@@ -24,7 +24,8 @@ clean while important unit information remains visible elsewhere on screen.
   as normal icons. Trust reminders clear after observed gain messages and reset
   on zoning or party changes, even if another chat addon modifies or hides the
   native incoming line. On load, recent current-zone effect messages seed the
-  observed state so reloads can keep already-applied trust buffs visible.
+  observed state, and a bounded live chat-log tail keeps trust buffs updated
+  after reloads and new casts.
   Protect and Shell are mapped first.
 - Includes a persistent in-game configuration window for visibility, locking,
   sizing, opacity, party buff display, missing-buff reminders, and alliance

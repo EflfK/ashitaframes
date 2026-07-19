@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.9';
+addon.version   = '0.3.10';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -188,6 +188,10 @@ local state = {
     observed_buffs = { },
     observed_buff_zone_id = nil,
     observed_text_events = 0,
+    observed_log_path = nil,
+    observed_log_position = 0,
+    observed_log_last_check = 0,
+    observed_log_events = 0,
     party_window_x = 36,
     party_window_y = 362,
     target_window_x = 36,
@@ -2102,7 +2106,7 @@ local function print_status()
     local reminder_job = current_player_job_key();
     local reminder_profile = reminder_profile_for_job(reminder_job);
 
-    log_info(('visible=%s locked=%s target=%s party=%s alliance=%s buffs=%s reminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) target=(%d,%d)'):fmt(
+    log_info(('visible=%s locked=%s target=%s party=%s alliance=%s buffs=%s reminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) target=(%d,%d)'):fmt(
         tostring(state.visible[1] == true),
         tostring(state.settings.locked == true),
         tostring(state.settings.show_target == true),
@@ -2114,6 +2118,7 @@ local function print_status()
         reminder_profile.enabled and 'on' or 'off',
         observed_buff_summary(),
         state.observed_text_events,
+        state.observed_log_events,
         state.settings.max_buffs,
         state.settings.frame_width,
         state.settings.row_height,
@@ -2235,20 +2240,28 @@ local function process_observed_buff_text(message)
     return set_observed_buff(name, key, enabled);
 end
 
-local function seed_observed_buffs_from_chat_log()
+local function current_chat_log_path()
     local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
     local party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
     local character = party ~= nil and clean_string(safe_read(function () return party:GetMemberName(0); end, '')) or '';
     if (#character == 0) then
-        return;
+        return nil;
     end
 
     local install_path = clean_string(safe_read(function () return AshitaCore:GetInstallPath(); end, ''));
     if (#install_path == 0) then
+        return nil;
+    end
+
+    return ('%schatlogs\\%s_%s.log'):fmt(install_path, character, os.date('%Y.%m.%d'));
+end
+
+local function seed_observed_buffs_from_chat_log()
+    local path = current_chat_log_path();
+    if (path == nil) then
         return;
     end
 
-    local path = ('%schatlogs\\%s_%s.log'):fmt(install_path, character, os.date('%Y.%m.%d'));
     local file = io.open(path, 'r');
     if (file == nil) then
         return;
@@ -2261,6 +2274,7 @@ local function seed_observed_buffs_from_chat_log()
             table.remove(lines, 1);
         end
     end
+    local position = file:seek('end') or 0;
     file:close();
 
     local start_index = 1;
@@ -2274,6 +2288,52 @@ local function seed_observed_buffs_from_chat_log()
     for index = start_index, #lines, 1 do
         process_observed_buff_text(lines[index]);
     end
+
+    state.observed_log_path = path;
+    state.observed_log_position = position;
+end
+
+local function poll_observed_buffs_from_chat_log()
+    local now = os.time();
+    if (state.observed_log_last_check == now) then
+        return;
+    end
+    state.observed_log_last_check = now;
+
+    local path = current_chat_log_path();
+    if (path == nil) then
+        return;
+    end
+
+    if (state.observed_log_path ~= path) then
+        state.observed_log_path = path;
+        state.observed_log_position = 0;
+        seed_observed_buffs_from_chat_log();
+        return;
+    end
+
+    local file = io.open(path, 'r');
+    if (file == nil) then
+        return;
+    end
+
+    local size = file:seek('end') or 0;
+    local position = tonumber(state.observed_log_position) or 0;
+    if (position <= 0 or position > size) then
+        state.observed_log_position = size;
+        file:close();
+        return;
+    end
+
+    file:seek('set', position);
+    for line in file:lines() do
+        if (process_observed_buff_text(line)) then
+            state.observed_log_events = state.observed_log_events + 1;
+        end
+    end
+
+    state.observed_log_position = file:seek() or size;
+    file:close();
 end
 
 local function handle_text_in(e)
@@ -2374,6 +2434,8 @@ ashita.events.register('text_in', 'text_in_cb', function (e)
 end);
 
 ashita.events.register('d3d_present', 'present_cb', function ()
+    poll_observed_buffs_from_chat_log();
+
     if (not state.visible[1]) then
         render_config_window();
         return;
