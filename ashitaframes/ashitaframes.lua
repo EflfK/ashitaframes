@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.2';
+addon.version   = '0.3.3';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -69,11 +69,11 @@ local DEFAULT_SETTINGS = {
     opacity = 88,
     buff_reminders = {
         default = {
-            enabled = false,
+            enabled = true,
             self = true,
             players = true,
             trusts = true,
-            buffs = { },
+            buffs = { 'protect', 'shell' },
         },
         BST = {
             enabled = true,
@@ -116,15 +116,15 @@ local BUFF_ICON_FILES = {
     shell = 'shell_1.png',
 };
 local BUFF_DEFINITIONS = {
-    protect = { label = 'Protect', file = BUFF_ICON_FILES.protect },
-    shell = { label = 'Shell', file = BUFF_ICON_FILES.shell },
+    protect = { label = 'Protect', spell = 'Protect', file = BUFF_ICON_FILES.protect },
+    shell = { label = 'Shell', spell = 'Shell', file = BUFF_ICON_FILES.shell },
 };
 local BUFF_REMINDER_PROFILE_DEFAULT = {
-    enabled = false,
+    enabled = true,
     self = true,
     players = true,
     trusts = true,
-    buffs = { },
+    buffs = { 'protect', 'shell' },
 };
 
 local LIMITS = {
@@ -703,6 +703,83 @@ local function active_buff_key_lookup(buffs)
     return lookup;
 end
 
+local function spell_id(spell)
+    if (spell == nil) then
+        return nil;
+    end
+
+    return tonumber(safe_read(function () return spell.Index; end, safe_read(function () return spell.Id; end, nil)));
+end
+
+local function current_player_spell_state()
+    local player = safe_read(function () return AshitaCore:GetMemoryManager():GetPlayer(); end, nil);
+    if (player == nil) then
+        return nil;
+    end
+
+    return {
+        player = player,
+        main_job = safe_read(function () return player:GetMainJob(); end, nil),
+        sub_job = safe_read(function () return player:GetSubJob(); end, nil),
+        main_level = safe_read(function () return player:GetMainJobLevel(); end, nil),
+        sub_level = safe_read(function () return player:GetSubJobLevel(); end, nil),
+        has_spell_data = safe_read(function () return player:HasSpellData(); end, false),
+    };
+end
+
+local function spell_level_required(spell, job_id)
+    if (spell == nil or spell.LevelRequired == nil or job_id == nil or job_id <= 0) then
+        return nil;
+    end
+
+    local level = tonumber(safe_read(function () return spell.LevelRequired[job_id + 1]; end, nil));
+    if (level == nil or level < 0 or level > 99) then
+        return nil;
+    end
+
+    return level;
+end
+
+local function spell_usable_for_current_job(spell, spell_state)
+    if (spell == nil or spell_state == nil or spell.LevelRequired == nil) then
+        return false;
+    end
+
+    local main_required = spell_level_required(spell, spell_state.main_job);
+    if (main_required ~= nil and spell_state.main_level ~= nil and spell_state.main_level >= main_required) then
+        return true;
+    end
+
+    local sub_required = spell_level_required(spell, spell_state.sub_job);
+    if (sub_required ~= nil and spell_state.sub_level ~= nil and spell_state.sub_level >= sub_required) then
+        return true;
+    end
+
+    return false;
+end
+
+local function reminder_spell_available(key)
+    key = normalize_buff_key(key);
+    local definition = key ~= nil and BUFF_DEFINITIONS[key] or nil;
+    if (definition == nil or definition.spell == nil) then
+        return false;
+    end
+
+    local spell_state = current_player_spell_state();
+    if (spell_state == nil or not truthy(spell_state.has_spell_data)) then
+        return false;
+    end
+
+    local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
+    local spell = resources ~= nil and safe_read(function () return resources:GetSpellByName(definition.spell, 0); end, nil) or nil;
+    local id = spell_id(spell);
+    if (spell == nil or id == nil or not truthy(safe_read(function () return spell_state.player:HasSpell(id); end, false))) then
+        return false;
+    end
+
+    return spell_usable_for_current_job(spell, spell_state);
+end
+
 local function reminder_profile_for_job(job)
     local reminders = state.settings.buff_reminders;
     if (type(reminders) ~= 'table') then
@@ -798,7 +875,14 @@ local function reminder_buff_keys(unit)
         return { };
     end
 
-    return profile.buffs or { };
+    local result = { };
+    for _, key in ipairs(profile.buffs or { }) do
+        if (reminder_spell_available(key)) then
+            table.insert(result, normalize_buff_key(key));
+        end
+    end
+
+    return result;
 end
 
 local function buff_icon_items(unit)
@@ -1490,11 +1574,17 @@ local function render_profile_bool(profile, field, label, id)
 end
 
 local function render_profile_buff_toggle(profile, key, label)
+    if (not reminder_spell_available(key)) then
+        return false;
+    end
+
     local enabled = buff_list_has(profile.buffs, key);
     if (imgui.Checkbox(('%s##ashitaframes_buff_reminder_%s'):fmt(label, key), { enabled })) then
         set_profile_buff_enabled(profile, key, not enabled);
         mark_config_changed();
     end
+
+    return true;
 end
 
 local function render_buff_reminder_config()
@@ -1537,9 +1627,23 @@ local function render_buff_reminder_config()
     render_profile_bool(profile, 'trusts', 'Trusts', ('reminder_%s_trusts'):fmt(selected_job));
 
     imgui.TextColored(COLORS.text_muted, 'Buffs');
-    render_profile_buff_toggle(profile, 'protect', 'Protect');
-    imgui.SameLine(0, 12);
-    render_profile_buff_toggle(profile, 'shell', 'Shell');
+    local any_buff = false;
+    if (render_profile_buff_toggle(profile, 'protect', 'Protect')) then
+        any_buff = true;
+    end
+    if (reminder_spell_available('shell')) then
+        if (any_buff) then
+            imgui.SameLine(0, 12);
+        end
+        if (render_profile_buff_toggle(profile, 'shell', 'Shell')) then
+            any_buff = true;
+        end
+    end
+    if (not any_buff) then
+        imgui.TextColored(COLORS.text_muted, 'No supported buffs available for current job/subjob.');
+    elseif (buff_list_has(profile.buffs, 'shell') and not reminder_spell_available('shell')) then
+        imgui.TextColored(COLORS.text_muted, 'Shell is configured on but unavailable on current job/subjob.');
+    end
 end
 
 local function render_config_window()

@@ -103,7 +103,8 @@ Open the in-game configuration window:
 The Buff Reminders section lets you pick a main-job profile, enable reminders
 for that job, choose self/player/trust targets, and toggle Protect or Shell.
 Use Save to write the current window layout and reminder settings to
-`ashitaframes_config.lua`.
+`ashitaframes_config.lua`. Reminder options are filtered to spells your current
+main/sub job can actually cast and that your character has learned.
 
 Manual config is still supported:
 
@@ -142,11 +143,11 @@ return {
 
         buff_reminders = {
             default = {
-                enabled = false,
+                enabled = true,
                 self = true,
                 players = true,
                 trusts = true,
-                buffs = { },
+                buffs = { 'protect', 'shell' },
             },
 
             BST = {
@@ -163,7 +164,9 @@ return {
 
 `buff_reminders` is keyed by your current main job. Each profile can enable or
 disable reminders for yourself (`self`), other players (`players`), and trusts
-(`trusts`). Supported reminder keys are currently `protect` and `shell`.
+(`trusts`). Supported reminder keys are currently `protect` and `shell`;
+configured reminders only display when the spell is learned and usable on your
+current main/sub job.
 
 ## Development
 

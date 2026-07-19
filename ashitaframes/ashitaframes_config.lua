@@ -28,11 +28,11 @@ return {
 
         buff_reminders = {
             default = {
-                enabled = false,
+                enabled = true,
                 self = true,
                 players = true,
                 trusts = true,
-                buffs = { },
+                buffs = { 'protect', 'shell' },
             },
 
             BST = {
