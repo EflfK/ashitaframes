@@ -14,6 +14,8 @@ return {
         show_tp = true,
         show_buffs = true,
         show_buff_reminders = true,
+        hide_buff_reminders_in_towns = true,
+        buff_reminder_suppressed_zone_ids = { },
         max_buffs = 8,
 
         party_window_x = 36,

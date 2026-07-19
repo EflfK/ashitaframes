@@ -105,7 +105,9 @@ The Buff Reminders section lets you pick a main-job profile, enable reminders
 for that job, choose self/player/trust targets, and toggle Protect or Shell.
 Use Save to write the current window layout and reminder settings to
 `ashitaframes_config.lua`. Reminder options are filtered to spells your current
-main/sub job can actually cast and that your character has learned.
+main/sub job can actually cast and that your character has learned. Missing
+reminder flashes are hidden in towns by default; the config window can also
+suppress or allow the current non-town zone.
 
 Manual config is still supported:
 
@@ -132,6 +134,8 @@ return {
         show_tp = true,
         show_buffs = true,
         show_buff_reminders = true,
+        hide_buff_reminders_in_towns = true,
+        buff_reminder_suppressed_zone_ids = { },
         max_buffs = 8,
         party_window_x = 36,
         party_window_y = 362,
@@ -168,6 +172,10 @@ disable reminders for yourself (`self`), other players (`players`), and trusts
 (`trusts`). Supported reminder keys are currently `protect` and `shell`;
 configured reminders only display when the spell is learned and usable on your
 current main/sub job.
+
+`hide_buff_reminders_in_towns` hides missing-buff flashes in town and safe hub
+zones. Add zone ids to `buff_reminder_suppressed_zone_ids` to hide missing
+reminders in additional zones.
 
 ## Development
 

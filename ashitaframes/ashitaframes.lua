@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.4';
+addon.version   = '0.3.5';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -58,6 +58,8 @@ local DEFAULT_SETTINGS = {
     show_tp = true,
     show_buffs = true,
     show_buff_reminders = true,
+    hide_buff_reminders_in_towns = true,
+    buff_reminder_suppressed_zone_ids = { },
     max_buffs = 8,
     party_window_x = 36,
     party_window_y = 362,
@@ -125,6 +127,38 @@ local BUFF_REMINDER_PROFILE_DEFAULT = {
     players = true,
     trusts = true,
     buffs = { 'protect', 'shell' },
+};
+local TOWN_ZONE_IDS = {
+    [26]  = true, -- Tavnazian Safehold
+    [48]  = true, -- Al Zahbi
+    [50]  = true, -- Aht Urhgan Whitegate
+    [53]  = true, -- Nashmau
+    [230] = true, -- Southern San d'Oria
+    [231] = true, -- Northern San d'Oria
+    [232] = true, -- Port San d'Oria
+    [233] = true, -- Chateau d'Oraguille
+    [234] = true, -- Bastok Mines
+    [235] = true, -- Bastok Markets
+    [236] = true, -- Port Bastok
+    [237] = true, -- Metalworks
+    [238] = true, -- Windurst Waters
+    [239] = true, -- Windurst Walls
+    [240] = true, -- Port Windurst
+    [241] = true, -- Windurst Woods
+    [242] = true, -- Heavens Tower
+    [243] = true, -- Ru'Lude Gardens
+    [244] = true, -- Upper Jeuno
+    [245] = true, -- Lower Jeuno
+    [246] = true, -- Port Jeuno
+    [247] = true, -- Rabao
+    [248] = true, -- Selbina
+    [249] = true, -- Mhaura
+    [250] = true, -- Kazham
+    [252] = true, -- Norg
+    [256] = true, -- Western Adoulin
+    [257] = true, -- Eastern Adoulin
+    [280] = true, -- Mog Garden
+    [284] = true, -- Celennia Memorial Library
 };
 
 local LIMITS = {
@@ -355,6 +389,43 @@ local function normalize_buff_reminders(source)
     return result;
 end
 
+local function append_zone_id(result, seen, value)
+    local zone_id = tonumber(value);
+    if (zone_id == nil) then
+        return;
+    end
+
+    zone_id = math.floor(zone_id + 0.5);
+    if (zone_id <= 0 or seen[zone_id]) then
+        return;
+    end
+
+    seen[zone_id] = true;
+    table.insert(result, zone_id);
+end
+
+local function normalize_zone_id_list(source)
+    local result = { };
+    local seen = { };
+
+    if (type(source) ~= 'table') then
+        return result;
+    end
+
+    for _, value in ipairs(source) do
+        append_zone_id(result, seen, value);
+    end
+
+    for key, value in pairs(source) do
+        if (value == true) then
+            append_zone_id(result, seen, key);
+        end
+    end
+
+    table.sort(result);
+    return result;
+end
+
 local function overlay_settings(target, source)
     if (type(source) ~= 'table') then
         return target;
@@ -382,6 +453,7 @@ local function normalize_settings(settings)
     settings.show_tp = settings.show_tp ~= false;
     settings.show_buffs = settings.show_buffs ~= false;
     settings.show_buff_reminders = settings.show_buff_reminders ~= false;
+    settings.hide_buff_reminders_in_towns = settings.hide_buff_reminders_in_towns ~= false;
 
     settings.party_window_x = clamp_int(settings.party_window_x, -2000, 4000);
     settings.party_window_y = clamp_int(settings.party_window_y, -2000, 4000);
@@ -393,6 +465,7 @@ local function normalize_settings(settings)
     settings.max_buffs = clamp_int(settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
     settings.opacity = clamp_int(settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max);
     settings.buff_reminders = normalize_buff_reminders(settings.buff_reminders);
+    settings.buff_reminder_suppressed_zone_ids = normalize_zone_id_list(settings.buff_reminder_suppressed_zone_ids);
 
     return settings;
 end
@@ -866,7 +939,7 @@ local function unit_reminder_enabled(unit, profile)
 end
 
 local function reminder_buff_keys(unit)
-    if (not state.settings.show_buff_reminders or unit.kind ~= 'party') then
+    if (not state.settings.show_buff_reminders or unit.kind ~= 'party' or unit.reminders_suppressed == true) then
         return { };
     end
 
@@ -947,6 +1020,87 @@ local function current_player_job_key(party)
     local job_id = safe_read(function () return party:GetMemberMainJob(0); end, nil);
     local job = normalize_job_key(job_id);
     return #job > 0 and job or 'default';
+end
+
+local function current_player_zone_id(party)
+    if (party == nil) then
+        local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+        party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
+    end
+
+    if (party == nil) then
+        return nil;
+    end
+
+    return tonumber(safe_read(function () return party:GetMemberZone(0); end, nil));
+end
+
+local function zone_name(zone_id)
+    zone_id = tonumber(zone_id);
+    if (zone_id == nil) then
+        return 'Unknown';
+    end
+
+    local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
+    local name = resources ~= nil and clean_string(safe_read(function () return resources:GetString('zones.names', zone_id); end, '')) or '';
+    if (#name == 0) then
+        return ('Zone %d'):fmt(zone_id);
+    end
+
+    return name;
+end
+
+local function zone_list_has(zone_ids, zone_id)
+    zone_id = tonumber(zone_id);
+    if (zone_id == nil or type(zone_ids) ~= 'table') then
+        return false;
+    end
+
+    zone_id = math.floor(zone_id + 0.5);
+    for _, value in ipairs(zone_ids) do
+        if (value == zone_id) then
+            return true;
+        end
+    end
+
+    return false;
+end
+
+local function set_zone_suppressed(zone_id, suppressed)
+    zone_id = tonumber(zone_id);
+    if (zone_id == nil or zone_id <= 0) then
+        return;
+    end
+
+    zone_id = math.floor(zone_id + 0.5);
+    local result = { };
+    local seen = { };
+
+    for _, value in ipairs(state.settings.buff_reminder_suppressed_zone_ids or { }) do
+        if (value ~= zone_id) then
+            append_zone_id(result, seen, value);
+        end
+    end
+
+    if (suppressed == true) then
+        append_zone_id(result, seen, zone_id);
+    end
+
+    state.settings.buff_reminder_suppressed_zone_ids = result;
+end
+
+local function buff_reminders_suppressed_for_zone(zone_id)
+    zone_id = tonumber(zone_id);
+    if (zone_id == nil) then
+        return false;
+    end
+
+    zone_id = math.floor(zone_id + 0.5);
+    if (state.settings.hide_buff_reminders_in_towns and TOWN_ZONE_IDS[zone_id] == true) then
+        return true;
+    end
+
+    return zone_list_has(state.settings.buff_reminder_suppressed_zone_ids, zone_id);
 end
 
 local function party_member_category(index, target_index, server_id)
@@ -1048,6 +1202,20 @@ local function buff_list_text(buffs)
     return ('{ %s }'):fmt(table.concat(pieces, ', '));
 end
 
+local function zone_id_list_text(zone_ids)
+    local normalized = normalize_zone_id_list(zone_ids);
+    if (#normalized == 0) then
+        return '{ }';
+    end
+
+    local pieces = { };
+    for _, zone_id in ipairs(normalized) do
+        table.insert(pieces, tostring(zone_id));
+    end
+
+    return ('{ %s }'):fmt(table.concat(pieces, ', '));
+end
+
 local function config_key_text(key)
     if (key == 'default' or key:match('^%a[%w_]*$') ~= nil) then
         return key;
@@ -1101,6 +1269,7 @@ local function capture_runtime_settings_for_save()
     state.settings.target_window_x = state.target_window_x;
     state.settings.target_window_y = state.target_window_y;
     state.settings.buff_reminders = normalize_buff_reminders(state.settings.buff_reminders);
+    state.settings.buff_reminder_suppressed_zone_ids = normalize_zone_id_list(state.settings.buff_reminder_suppressed_zone_ids);
 
     return normalize_settings(state.settings);
 end
@@ -1124,6 +1293,8 @@ local function config_text_from_settings(settings)
         ('        show_tp = %s,'):fmt(bool_text(settings.show_tp)),
         ('        show_buffs = %s,'):fmt(bool_text(settings.show_buffs)),
         ('        show_buff_reminders = %s,'):fmt(bool_text(settings.show_buff_reminders)),
+        ('        hide_buff_reminders_in_towns = %s,'):fmt(bool_text(settings.hide_buff_reminders_in_towns)),
+        ('        buff_reminder_suppressed_zone_ids = %s,'):fmt(zone_id_list_text(settings.buff_reminder_suppressed_zone_ids)),
         ('        max_buffs = %d,'):fmt(settings.max_buffs),
         '',
         ('        party_window_x = %d,'):fmt(state.party_window_x),
@@ -1167,7 +1338,7 @@ local function save_config()
     return true, ('Saved %s.'):fmt(path);
 end
 
-local function party_member_unit(party, index, self_zone, reminder_job)
+local function party_member_unit(party, index, self_zone, reminder_job, reminders_suppressed)
     local active = truthy(safe_read(function () return party:GetMemberIsActive(index); end, false));
     local name = clean_string(safe_read(function () return party:GetMemberName(index); end, ''));
     local server_id = safe_read(function () return party:GetMemberServerId(index); end, 0);
@@ -1193,6 +1364,7 @@ local function party_member_unit(party, index, self_zone, reminder_job)
         name = #name > 0 and name or ('Slot %d'):fmt(index + 1),
         category = category,
         reminder_job = reminder_job,
+        reminders_suppressed = reminders_suppressed == true,
         hp_pct = safe_read(function () return party:GetMemberHPPercent(index); end, nil),
         mp_pct = safe_read(function () return party:GetMemberMPPercent(index); end, nil),
         tp = safe_read(function () return party:GetMemberTP(index); end, nil),
@@ -1220,11 +1392,12 @@ local function collect_party_units()
 
     local self_zone = safe_read(function () return party:GetMemberZone(0); end, nil);
     local reminder_job = current_player_job_key(party);
+    local reminders_suppressed = buff_reminders_suppressed_for_zone(self_zone);
     local max_index = state.settings.show_alliance and 17 or 5;
     local units = { };
 
     for index = 0, max_index, 1 do
-        local unit = party_member_unit(party, index, self_zone, reminder_job);
+        local unit = party_member_unit(party, index, self_zone, reminder_job, reminders_suppressed);
         if (unit ~= nil) then
             table.insert(units, unit);
         end
@@ -1602,6 +1775,32 @@ end
 local function render_buff_reminder_config()
     imgui.Separator();
     imgui.TextColored(COLORS.accent, 'Buff Reminders');
+
+    local hide_in_towns = state.settings.hide_buff_reminders_in_towns == true;
+    if (imgui.Checkbox('Hide Missing In Towns##ashitaframes_hide_buff_reminders_in_towns', { hide_in_towns })) then
+        state.settings.hide_buff_reminders_in_towns = not hide_in_towns;
+        mark_config_changed();
+    end
+
+    local zone_id = current_player_zone_id();
+    local zone_label = zone_id ~= nil and ('%s (%d)'):fmt(zone_name(zone_id), zone_id) or 'Unknown';
+    local zone_suppressed = buff_reminders_suppressed_for_zone(zone_id);
+    imgui.TextColored(COLORS.text_muted, ('Current zone: %s - %s'):fmt(zone_label, zone_suppressed and 'hidden' or 'shown'));
+
+    if (zone_id ~= nil and not (state.settings.hide_buff_reminders_in_towns and TOWN_ZONE_IDS[math.floor(zone_id + 0.5)] == true)) then
+        local explicit_suppressed = zone_list_has(state.settings.buff_reminder_suppressed_zone_ids, zone_id);
+        if (explicit_suppressed) then
+            if (imgui.Button('Allow Current Zone##ashitaframes_allow_current_zone')) then
+                set_zone_suppressed(zone_id, false);
+                mark_config_changed();
+            end
+        else
+            if (imgui.Button('Suppress Current Zone##ashitaframes_suppress_current_zone')) then
+                set_zone_suppressed(zone_id, true);
+                mark_config_changed();
+            end
+        end
+    end
 
     local current_job = current_player_job_key();
     local selected_job = current_config_job_key();
