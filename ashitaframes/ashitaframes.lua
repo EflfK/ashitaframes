@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.2.1';
+addon.version   = '0.3.10';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -40,6 +40,11 @@ local JOBS = {
     [22] = 'RUN',
 };
 
+local JOB_ORDER = {
+    'WAR', 'MNK', 'WHM', 'BLM', 'RDM', 'THF', 'PLD', 'DRK', 'BST', 'BRD', 'RNG',
+    'SAM', 'NIN', 'DRG', 'SMN', 'BLU', 'COR', 'PUP', 'DNC', 'SCH', 'GEO', 'RUN',
+};
+
 local DEFAULT_SETTINGS = {
     visible = true,
     locked = false,
@@ -52,6 +57,9 @@ local DEFAULT_SETTINGS = {
     show_percent = true,
     show_tp = true,
     show_buffs = true,
+    show_buff_reminders = true,
+    hide_buff_reminders_in_towns = true,
+    buff_reminder_suppressed_zone_ids = { },
     max_buffs = 8,
     party_window_x = 36,
     party_window_y = 362,
@@ -61,6 +69,22 @@ local DEFAULT_SETTINGS = {
     row_height = 56,
     row_gap = 5,
     opacity = 88,
+    buff_reminders = {
+        default = {
+            enabled = true,
+            self = true,
+            players = true,
+            trusts = true,
+            buffs = { 'protect', 'shell' },
+        },
+        BST = {
+            enabled = true,
+            self = true,
+            players = true,
+            trusts = true,
+            buffs = { 'protect' },
+        },
+    },
 };
 
 local COLORS = {
@@ -81,21 +105,68 @@ local COLORS = {
     accent = { 0.42, 0.82, 0.94, 1.00 },
     shadow = { 0.00, 0.00, 0.00, 0.90 },
     warning = { 1.00, 0.56, 0.26, 1.00 },
+    buff_active_border = { 0.08, 0.10, 0.10, 0.90 },
+    buff_missing_bg = { 0.70, 0.05, 0.03, 0.76 },
+    buff_missing_border = { 1.00, 0.10, 0.05, 1.00 },
+    buff_missing_flash = { 1.00, 0.94, 0.18, 1.00 },
 };
 
-local BUFF_ICON_SIZE = 18;
-local BUFF_ICON_GAP = 4;
+local BUFF_ICON_SIZE = 54;
+local BUFF_ICON_GAP = 6;
 local BUFF_ICON_FILES = {
     protect = 'protect_1.png',
     shell = 'shell_1.png',
+};
+local BUFF_DEFINITIONS = {
+    protect = { id = 40, label = 'Protect', spell = 'Protect', file = BUFF_ICON_FILES.protect },
+    shell = { id = 41, label = 'Shell', spell = 'Shell', file = BUFF_ICON_FILES.shell },
+};
+local BUFF_REMINDER_PROFILE_DEFAULT = {
+    enabled = true,
+    self = true,
+    players = true,
+    trusts = true,
+    buffs = { 'protect', 'shell' },
+};
+local TOWN_ZONE_IDS = {
+    [26]  = true, -- Tavnazian Safehold
+    [48]  = true, -- Al Zahbi
+    [50]  = true, -- Aht Urhgan Whitegate
+    [53]  = true, -- Nashmau
+    [230] = true, -- Southern San d'Oria
+    [231] = true, -- Northern San d'Oria
+    [232] = true, -- Port San d'Oria
+    [233] = true, -- Chateau d'Oraguille
+    [234] = true, -- Bastok Mines
+    [235] = true, -- Bastok Markets
+    [236] = true, -- Port Bastok
+    [237] = true, -- Metalworks
+    [238] = true, -- Windurst Waters
+    [239] = true, -- Windurst Walls
+    [240] = true, -- Port Windurst
+    [241] = true, -- Windurst Woods
+    [242] = true, -- Heavens Tower
+    [243] = true, -- Ru'Lude Gardens
+    [244] = true, -- Upper Jeuno
+    [245] = true, -- Lower Jeuno
+    [246] = true, -- Port Jeuno
+    [247] = true, -- Rabao
+    [248] = true, -- Selbina
+    [249] = true, -- Mhaura
+    [250] = true, -- Kazham
+    [252] = true, -- Norg
+    [256] = true, -- Western Adoulin
+    [257] = true, -- Eastern Adoulin
+    [280] = true, -- Mog Garden
+    [284] = true, -- Celennia Memorial Library
 };
 
 local LIMITS = {
     width_min = 170,
     width_max = 360,
     row_height_min = 32,
-    row_height_with_buffs_min = 54,
-    row_height_max = 84,
+    party_row_height_with_buffs_min = 92,
+    row_height_max = 132,
     row_gap_min = 0,
     row_gap_max = 14,
     max_buffs_min = 1,
@@ -109,8 +180,18 @@ local state = {
     visible = { true },
     config_visible = { false },
     config_error = nil,
+    config_save_message = nil,
+    config_save_message_color = nil,
+    config_job_key = nil,
     buff_name_cache = { },
     buff_icon_cache = { },
+    observed_buffs = { },
+    observed_buff_zone_id = nil,
+    observed_text_events = 0,
+    observed_log_path = nil,
+    observed_log_position = 0,
+    observed_log_last_check = 0,
+    observed_log_events = 0,
     party_window_x = 36,
     party_window_y = 362,
     target_window_x = 36,
@@ -183,6 +264,175 @@ local function truthy(value)
     return value == true or value == 1;
 end
 
+local function normalize_buff_key(value)
+    local key = clean_string(value):lower():gsub('[%s%-]+', '_');
+    if (key == 'protect' or key == 'protect_1') then
+        return 'protect';
+    end
+    if (key == 'shell' or key == 'shell_1') then
+        return 'shell';
+    end
+
+    return BUFF_DEFINITIONS[key] ~= nil and key or nil;
+end
+
+local function append_buff_key(result, seen, value)
+    local key = normalize_buff_key(value);
+    if (key == nil or seen[key]) then
+        return;
+    end
+
+    seen[key] = true;
+    table.insert(result, key);
+end
+
+local function normalize_buff_list(source)
+    local result = { };
+    local seen = { };
+
+    if (type(source) ~= 'table') then
+        return result;
+    end
+
+    for _, value in ipairs(source) do
+        append_buff_key(result, seen, value);
+    end
+
+    for key, value in pairs(source) do
+        if (type(key) == 'string' and value == true) then
+            append_buff_key(result, seen, key);
+        end
+    end
+
+    return result;
+end
+
+local function copy_buff_list(source)
+    local result = { };
+    if (type(source) ~= 'table') then
+        return result;
+    end
+
+    for index = 1, #source, 1 do
+        result[index] = source[index];
+    end
+
+    return result;
+end
+
+local function normalize_job_key(value)
+    if (type(value) == 'number') then
+        return JOBS[value] or '';
+    end
+
+    local numeric = tonumber(value);
+    if (numeric ~= nil) then
+        return JOBS[numeric] or '';
+    end
+
+    return clean_string(value):upper();
+end
+
+local function normalize_reminder_profile(source, fallback)
+    fallback = fallback or BUFF_REMINDER_PROFILE_DEFAULT;
+
+    local profile = {
+        enabled = fallback.enabled == true,
+        self = fallback.self ~= false,
+        players = fallback.players ~= false,
+        trusts = fallback.trusts ~= false,
+        buffs = copy_buff_list(fallback.buffs),
+    };
+
+    if (type(source) ~= 'table') then
+        return profile;
+    end
+
+    if (source.enabled ~= nil) then
+        profile.enabled = source.enabled == true;
+    end
+    if (source.self ~= nil) then
+        profile.self = source.self == true;
+    end
+    if (source.players ~= nil) then
+        profile.players = source.players == true;
+    end
+    if (source.trusts ~= nil) then
+        profile.trusts = source.trusts == true;
+    end
+
+    local buffs = source.buffs or source.required or source.required_buffs;
+    if (buffs ~= nil) then
+        profile.buffs = normalize_buff_list(buffs);
+    end
+
+    return profile;
+end
+
+local function normalize_buff_reminders(source)
+    local result = { };
+    local default_source = nil;
+
+    if (type(source) == 'table') then
+        default_source = source.default;
+        if (default_source == nil and (source.enabled ~= nil or source.buffs ~= nil or source.required ~= nil or source.required_buffs ~= nil)) then
+            default_source = source;
+        end
+    end
+
+    result.default = normalize_reminder_profile(default_source, BUFF_REMINDER_PROFILE_DEFAULT);
+
+    if (type(source) ~= 'table') then
+        return result;
+    end
+
+    for key, value in pairs(source) do
+        local job = normalize_job_key(key);
+        if (job ~= '' and job ~= 'DEFAULT' and type(value) == 'table') then
+            result[job] = normalize_reminder_profile(value, result.default);
+        end
+    end
+
+    return result;
+end
+
+local function append_zone_id(result, seen, value)
+    local zone_id = tonumber(value);
+    if (zone_id == nil) then
+        return;
+    end
+
+    zone_id = math.floor(zone_id + 0.5);
+    if (zone_id <= 0 or seen[zone_id]) then
+        return;
+    end
+
+    seen[zone_id] = true;
+    table.insert(result, zone_id);
+end
+
+local function normalize_zone_id_list(source)
+    local result = { };
+    local seen = { };
+
+    if (type(source) ~= 'table') then
+        return result;
+    end
+
+    for _, value in ipairs(source) do
+        append_zone_id(result, seen, value);
+    end
+
+    for key, value in pairs(source) do
+        if (value == true) then
+            append_zone_id(result, seen, key);
+        end
+    end
+
+    table.sort(result);
+    return result;
+end
+
 local function overlay_settings(target, source)
     if (type(source) ~= 'table') then
         return target;
@@ -209,17 +459,20 @@ local function normalize_settings(settings)
     settings.show_percent = settings.show_percent ~= false;
     settings.show_tp = settings.show_tp ~= false;
     settings.show_buffs = settings.show_buffs ~= false;
+    settings.show_buff_reminders = settings.show_buff_reminders ~= false;
+    settings.hide_buff_reminders_in_towns = settings.hide_buff_reminders_in_towns ~= false;
 
     settings.party_window_x = clamp_int(settings.party_window_x, -2000, 4000);
     settings.party_window_y = clamp_int(settings.party_window_y, -2000, 4000);
     settings.target_window_x = clamp_int(settings.target_window_x, -2000, 4000);
     settings.target_window_y = clamp_int(settings.target_window_y, -2000, 4000);
     settings.frame_width = clamp_int(settings.frame_width, LIMITS.width_min, LIMITS.width_max);
-    local row_height_min = settings.show_buffs and LIMITS.row_height_with_buffs_min or LIMITS.row_height_min;
-    settings.row_height = clamp_int(settings.row_height, row_height_min, LIMITS.row_height_max);
+    settings.row_height = clamp_int(settings.row_height, LIMITS.row_height_min, LIMITS.row_height_max);
     settings.row_gap = clamp_int(settings.row_gap, LIMITS.row_gap_min, LIMITS.row_gap_max);
     settings.max_buffs = clamp_int(settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
     settings.opacity = clamp_int(settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max);
+    settings.buff_reminders = normalize_buff_reminders(settings.buff_reminders);
+    settings.buff_reminder_suppressed_zone_ids = normalize_zone_id_list(settings.buff_reminder_suppressed_zone_ids);
 
     return settings;
 end
@@ -231,6 +484,8 @@ local function load_config()
     end
 
     state.config_error = nil;
+    state.config_save_message = nil;
+    state.config_save_message_color = nil;
     package.loaded.ashitaframes_config = nil;
 
     local ok, config = pcall(require, 'ashitaframes_config');
@@ -339,57 +594,194 @@ local function player_buffs()
     return result;
 end
 
-local function party_status_buffs(server_id)
-    server_id = tonumber(server_id) or 0;
-    if (server_id == 0) then
-        return { };
-    end
-
+local function party_status_base()
     local pointer_manager = safe_read(function () return AshitaCore:GetPointerManager(); end, nil);
     local pointer = pointer_manager ~= nil and safe_read(function () return pointer_manager:Get('party.statusicons'); end, 0) or 0;
     local base = pointer ~= 0 and safe_read(function () return ashita.memory.read_uint32(pointer); end, 0) or 0;
     if (base == 0) then
-        return { };
+        return 0;
+    end
+
+    return base;
+end
+
+local function party_status_member_ptr(base, member_index)
+    member_index = tonumber(member_index);
+    if (base == nil or base == 0 or member_index == nil or member_index < 0 or member_index > 4) then
+        return 0;
+    end
+
+    return base + (0x30 * member_index);
+end
+
+local function party_status_row_buffs(member_ptr)
+    local result = { };
+    local seen = { };
+
+    if (member_ptr == nil or member_ptr == 0) then
+        return result;
+    end
+
+    for buff_index = 0, 31, 1 do
+        local high_bits = safe_read(function () return ashita.memory.read_uint8(member_ptr + 8 + math.floor(buff_index / 4)); end, 0);
+        local shift = math.fmod(buff_index, 4) * 2;
+        high_bits = bit.lshift(bit.band(bit.rshift(high_bits, shift), 0x03), 8);
+
+        local low_bits = safe_read(function () return ashita.memory.read_uint8(member_ptr + 16 + buff_index); end, 255);
+        local buff_id = high_bits + low_bits;
+        if (buff_id == 255) then
+            break;
+        end
+
+        append_buff_id(result, seen, buff_id);
+    end
+
+    return result;
+end
+
+local function party_status_buffs_by_server_id(base, server_id)
+    server_id = tonumber(server_id) or 0;
+    if (base == 0 or server_id == 0) then
+        return nil;
     end
 
     for member_index = 0, 4, 1 do
-        local member_ptr = base + (0x30 * member_index);
+        local member_ptr = party_status_member_ptr(base, member_index);
         local player_id = safe_read(function () return ashita.memory.read_uint32(member_ptr); end, 0);
         if (player_id == server_id) then
-            local result = { };
-            local seen = { };
-
-            for buff_index = 0, 31, 1 do
-                local high_bits = safe_read(function () return ashita.memory.read_uint8(member_ptr + 8 + math.floor(buff_index / 4)); end, 0);
-                local shift = math.fmod(buff_index, 4) * 2;
-                high_bits = bit.lshift(bit.band(bit.rshift(high_bits, shift), 0x03), 8);
-
-                local low_bits = safe_read(function () return ashita.memory.read_uint8(member_ptr + 16 + buff_index); end, 255);
-                local buff_id = high_bits + low_bits;
-                if (buff_id == 255) then
-                    break;
-                end
-
-                append_buff_id(result, seen, buff_id);
-            end
-
-            return result;
+            return party_status_row_buffs(member_ptr);
         end
+    end
+
+    return nil;
+end
+
+local function party_status_buffs_by_party_slot(base, party_index)
+    party_index = tonumber(party_index) or 0;
+    if (base == 0 or party_index < 1 or party_index > 5) then
+        return nil;
+    end
+
+    return party_status_row_buffs(party_status_member_ptr(base, party_index - 1));
+end
+
+local function party_status_buffs(party_index, server_id)
+    local base = party_status_base();
+    if (base == 0) then
+        return { };
+    end
+
+    local by_id = party_status_buffs_by_server_id(base, server_id);
+    if (by_id ~= nil) then
+        return by_id;
+    end
+
+    local by_slot = party_status_buffs_by_party_slot(base, party_index);
+    if (by_slot ~= nil) then
+        return by_slot;
     end
 
     return { };
 end
 
-local function party_member_buffs(party, index, server_id, same_zone)
+local function observed_name_key(name)
+    name = clean_string(name):lower():gsub('%s+', ' ');
+    if (#name == 0) then
+        return nil;
+    end
+
+    return name;
+end
+
+local function buff_id_for_key(key)
+    key = normalize_buff_key(key);
+    local definition = key ~= nil and BUFF_DEFINITIONS[key] or nil;
+    return definition ~= nil and tonumber(definition.id) or nil;
+end
+
+local function observed_buffs_for_name(name)
+    local name_key = observed_name_key(name);
+    local entry = name_key ~= nil and state.observed_buffs[name_key] or nil;
+    local result = { };
+    local seen = { };
+
+    if (type(entry) ~= 'table') then
+        return result;
+    end
+
+    for key, enabled in pairs(entry) do
+        if (enabled == true) then
+            append_buff_id(result, seen, buff_id_for_key(key));
+        end
+    end
+
+    return result;
+end
+
+local function merge_buff_lists(primary, secondary)
+    local result = { };
+    local seen = { };
+
+    for _, value in ipairs(primary or { }) do
+        append_buff_id(result, seen, value);
+    end
+
+    for _, value in ipairs(secondary or { }) do
+        append_buff_id(result, seen, value);
+    end
+
+    return result;
+end
+
+local function clear_observed_buffs()
+    state.observed_buffs = { };
+end
+
+local function sync_observed_buffs_for_party(party, self_zone)
+    local zone_id = tonumber(self_zone);
+    if (zone_id ~= nil) then
+        zone_id = math.floor(zone_id + 0.5);
+        if (state.observed_buff_zone_id ~= nil and state.observed_buff_zone_id ~= zone_id) then
+            clear_observed_buffs();
+        end
+        state.observed_buff_zone_id = zone_id;
+    end
+
+    if (party == nil) then
+        return;
+    end
+
+    local active_names = { };
+    for index = 0, 5, 1 do
+        local active = truthy(safe_read(function () return party:GetMemberIsActive(index); end, false));
+        local name = clean_string(safe_read(function () return party:GetMemberName(index); end, ''));
+        local member_zone = safe_read(function () return party:GetMemberZone(index); end, nil);
+        local same_zone = self_zone == nil or member_zone == nil or member_zone == self_zone;
+        local key = observed_name_key(name);
+
+        if (active and same_zone and key ~= nil) then
+            active_names[key] = true;
+        end
+    end
+
+    for key, _ in pairs(state.observed_buffs) do
+        if (active_names[key] ~= true) then
+            state.observed_buffs[key] = nil;
+        end
+    end
+end
+
+local function party_member_buffs(party, index, server_id, same_zone, name)
     if (not state.settings.show_buffs or index > 5 or same_zone == false) then
         return { };
     end
 
+    local observed = observed_buffs_for_name(name);
     if (index == 0) then
-        return player_buffs();
+        return merge_buff_lists(player_buffs(), observed);
     end
 
-    return party_status_buffs(server_id);
+    return merge_buff_lists(party_status_buffs(index, server_id), observed);
 end
 
 local function buff_name(buff_id)
@@ -447,38 +839,262 @@ local function load_buff_icon(filename)
     return icon;
 end
 
-local function buff_icon_file(buff_id)
-    local name = buff_name(buff_id):lower();
+local function buff_key_from_name(name)
+    name = clean_string(name):lower();
     if (name:find('protect', 1, true) ~= nil) then
-        return BUFF_ICON_FILES.protect;
+        return 'protect';
     end
     if (name:find('shell', 1, true) ~= nil) then
-        return BUFF_ICON_FILES.shell;
+        return 'shell';
     end
 
     return nil;
 end
 
-local function buff_icon_items(buffs)
+local function buff_key_from_id(buff_id)
+    return buff_key_from_name(buff_name(buff_id));
+end
+
+local function active_buff_key_lookup(buffs)
+    local lookup = { };
+    if (type(buffs) ~= 'table') then
+        return lookup;
+    end
+
+    for index = 1, #buffs, 1 do
+        local key = buff_key_from_id(buffs[index]);
+        if (key ~= nil) then
+            lookup[key] = true;
+        end
+    end
+
+    return lookup;
+end
+
+local function spell_id(spell)
+    if (spell == nil) then
+        return nil;
+    end
+
+    return tonumber(safe_read(function () return spell.Index; end, safe_read(function () return spell.Id; end, nil)));
+end
+
+local function current_player_spell_state()
+    local player = safe_read(function () return AshitaCore:GetMemoryManager():GetPlayer(); end, nil);
+    if (player == nil) then
+        return nil;
+    end
+
+    return {
+        player = player,
+        main_job = safe_read(function () return player:GetMainJob(); end, nil),
+        sub_job = safe_read(function () return player:GetSubJob(); end, nil),
+        main_level = safe_read(function () return player:GetMainJobLevel(); end, nil),
+        sub_level = safe_read(function () return player:GetSubJobLevel(); end, nil),
+        has_spell_data = safe_read(function () return player:HasSpellData(); end, false),
+    };
+end
+
+local function spell_level_required(spell, job_id)
+    if (spell == nil or spell.LevelRequired == nil or job_id == nil or job_id <= 0) then
+        return nil;
+    end
+
+    local level = tonumber(safe_read(function () return spell.LevelRequired[job_id + 1]; end, nil));
+    if (level == nil or level < 0 or level > 99) then
+        return nil;
+    end
+
+    return level;
+end
+
+local function spell_usable_for_current_job(spell, spell_state)
+    if (spell == nil or spell_state == nil or spell.LevelRequired == nil) then
+        return false;
+    end
+
+    local main_required = spell_level_required(spell, spell_state.main_job);
+    if (main_required ~= nil and spell_state.main_level ~= nil and spell_state.main_level >= main_required) then
+        return true;
+    end
+
+    local sub_required = spell_level_required(spell, spell_state.sub_job);
+    if (sub_required ~= nil and spell_state.sub_level ~= nil and spell_state.sub_level >= sub_required) then
+        return true;
+    end
+
+    return false;
+end
+
+local function reminder_spell_available(key)
+    key = normalize_buff_key(key);
+    local definition = key ~= nil and BUFF_DEFINITIONS[key] or nil;
+    if (definition == nil or definition.spell == nil) then
+        return false;
+    end
+
+    local spell_state = current_player_spell_state();
+    if (spell_state == nil or not truthy(spell_state.has_spell_data)) then
+        return false;
+    end
+
+    local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
+    local spell = resources ~= nil and safe_read(function () return resources:GetSpellByName(definition.spell, 0); end, nil) or nil;
+    local id = spell_id(spell);
+    if (spell == nil or id == nil or not truthy(safe_read(function () return spell_state.player:HasSpell(id); end, false))) then
+        return false;
+    end
+
+    return spell_usable_for_current_job(spell, spell_state);
+end
+
+local function reminder_profile_for_job(job)
+    local reminders = state.settings.buff_reminders;
+    if (type(reminders) ~= 'table') then
+        return BUFF_REMINDER_PROFILE_DEFAULT;
+    end
+
+    return reminders[job] or reminders.default or BUFF_REMINDER_PROFILE_DEFAULT;
+end
+
+local function ensure_reminder_profile(job)
+    if (type(state.settings.buff_reminders) ~= 'table') then
+        state.settings.buff_reminders = normalize_buff_reminders(nil);
+    end
+    if (type(state.settings.buff_reminders.default) ~= 'table') then
+        state.settings.buff_reminders.default = normalize_reminder_profile(nil, BUFF_REMINDER_PROFILE_DEFAULT);
+    end
+
+    job = normalize_job_key(job);
+    if (#job == 0 or job == 'DEFAULT') then
+        return state.settings.buff_reminders.default;
+    end
+
+    if (type(state.settings.buff_reminders[job]) ~= 'table') then
+        state.settings.buff_reminders[job] = normalize_reminder_profile(nil, state.settings.buff_reminders.default);
+    end
+
+    return state.settings.buff_reminders[job];
+end
+
+local function buff_list_has(buffs, key)
+    key = normalize_buff_key(key);
+    if (key == nil or type(buffs) ~= 'table') then
+        return false;
+    end
+
+    for _, value in ipairs(buffs) do
+        if (normalize_buff_key(value) == key) then
+            return true;
+        end
+    end
+
+    return false;
+end
+
+local function set_profile_buff_enabled(profile, key, enabled)
+    if (type(profile) ~= 'table') then
+        return;
+    end
+
+    key = normalize_buff_key(key);
+    if (key == nil) then
+        return;
+    end
+
+    local result = { };
+    local seen = { };
+    for _, value in ipairs(profile.buffs or { }) do
+        local existing = normalize_buff_key(value);
+        if (existing ~= nil and existing ~= key and not seen[existing]) then
+            seen[existing] = true;
+            table.insert(result, existing);
+        end
+    end
+
+    if (enabled == true and not seen[key]) then
+        table.insert(result, key);
+    end
+
+    profile.buffs = result;
+end
+
+local function unit_reminder_enabled(unit, profile)
+    if (unit.same_zone == false or profile.enabled ~= true) then
+        return false;
+    end
+    if (unit.category == 'self') then
+        return profile.self == true;
+    end
+    if (unit.category == 'trust') then
+        return profile.trusts == true;
+    end
+
+    return profile.players == true;
+end
+
+local function reminder_buff_keys(unit)
+    if (not state.settings.show_buff_reminders or unit.kind ~= 'party' or unit.reminders_suppressed == true) then
+        return { };
+    end
+
+    local profile = reminder_profile_for_job(unit.reminder_job or 'default');
+    if (not unit_reminder_enabled(unit, profile)) then
+        return { };
+    end
+
+    local result = { };
+    for _, key in ipairs(profile.buffs or { }) do
+        if (reminder_spell_available(key)) then
+            table.insert(result, normalize_buff_key(key));
+        end
+    end
+
+    return result;
+end
+
+local function buff_icon_items(unit)
     local items = { };
-    if (type(buffs) ~= 'table' or #buffs == 0) then
+    if (type(unit.buffs) ~= 'table') then
         return items;
     end
 
     local max_buffs = state.settings.max_buffs or DEFAULT_SETTINGS.max_buffs;
-    for index = 1, #buffs, 1 do
+    local active_keys = active_buff_key_lookup(unit.buffs);
+
+    for index = 1, #unit.buffs, 1 do
         if (#items >= max_buffs) then
             break;
         end
 
-        local buff_id = buffs[index];
-        local filename = buff_icon_file(buff_id);
-        local icon = filename ~= nil and load_buff_icon(filename) or nil;
+        local buff_id = unit.buffs[index];
+        local key = buff_key_from_id(buff_id);
+        local definition = key ~= nil and BUFF_DEFINITIONS[key] or nil;
+        local icon = definition ~= nil and load_buff_icon(definition.file) or nil;
         if (icon ~= nil) then
             table.insert(items, {
                 id = buff_id,
+                key = key,
                 name = buff_name(buff_id),
                 handle = icon.handle,
+                state = 'active',
+            });
+        end
+    end
+
+    for _, key in ipairs(reminder_buff_keys(unit)) do
+        if (#items >= max_buffs) then
+            break;
+        end
+
+        local definition = BUFF_DEFINITIONS[key];
+        local icon = definition ~= nil and load_buff_icon(definition.file) or nil;
+        if (icon ~= nil and active_keys[key] ~= true) then
+            table.insert(items, {
+                key = key,
+                name = definition.label,
+                handle = icon.handle,
+                state = 'missing',
             });
         end
     end
@@ -486,7 +1102,338 @@ local function buff_icon_items(buffs)
     return items;
 end
 
-local function party_member_unit(party, index, self_zone)
+local function current_player_job_key(party)
+    if (party == nil) then
+        local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+        party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
+    end
+
+    if (party == nil) then
+        return 'default';
+    end
+
+    local job_id = safe_read(function () return party:GetMemberMainJob(0); end, nil);
+    local job = normalize_job_key(job_id);
+    return #job > 0 and job or 'default';
+end
+
+local function current_player_zone_id(party)
+    if (party == nil) then
+        local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+        party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
+    end
+
+    if (party == nil) then
+        return nil;
+    end
+
+    return tonumber(safe_read(function () return party:GetMemberZone(0); end, nil));
+end
+
+local function zone_name(zone_id)
+    zone_id = tonumber(zone_id);
+    if (zone_id == nil) then
+        return 'Unknown';
+    end
+
+    local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
+    local name = resources ~= nil and clean_string(safe_read(function () return resources:GetString('zones.names', zone_id); end, '')) or '';
+    if (#name == 0) then
+        return ('Zone %d'):fmt(zone_id);
+    end
+
+    return name;
+end
+
+local function zone_list_has(zone_ids, zone_id)
+    zone_id = tonumber(zone_id);
+    if (zone_id == nil or type(zone_ids) ~= 'table') then
+        return false;
+    end
+
+    zone_id = math.floor(zone_id + 0.5);
+    for _, value in ipairs(zone_ids) do
+        if (value == zone_id) then
+            return true;
+        end
+    end
+
+    return false;
+end
+
+local function set_zone_suppressed(zone_id, suppressed)
+    zone_id = tonumber(zone_id);
+    if (zone_id == nil or zone_id <= 0) then
+        return;
+    end
+
+    zone_id = math.floor(zone_id + 0.5);
+    local result = { };
+    local seen = { };
+
+    for _, value in ipairs(state.settings.buff_reminder_suppressed_zone_ids or { }) do
+        if (value ~= zone_id) then
+            append_zone_id(result, seen, value);
+        end
+    end
+
+    if (suppressed == true) then
+        append_zone_id(result, seen, zone_id);
+    end
+
+    state.settings.buff_reminder_suppressed_zone_ids = result;
+end
+
+local function buff_reminders_suppressed_for_zone(zone_id)
+    zone_id = tonumber(zone_id);
+    if (zone_id == nil) then
+        return false;
+    end
+
+    zone_id = math.floor(zone_id + 0.5);
+    if (state.settings.hide_buff_reminders_in_towns and TOWN_ZONE_IDS[zone_id] == true) then
+        return true;
+    end
+
+    return zone_list_has(state.settings.buff_reminder_suppressed_zone_ids, zone_id);
+end
+
+local function party_member_category(index, target_index, server_id)
+    if (index == 0) then
+        return 'self';
+    end
+
+    if (target_index ~= nil and target_index ~= 0) then
+        local entity = safe_read(function () return GetEntity(target_index); end, nil);
+        local entity_type = entity ~= nil and entity.Type or nil;
+        local trust_owner = entity ~= nil and entity.TrustOwnerTargetIndex or nil;
+        if (entity_type == 8 or (trust_owner ~= nil and trust_owner ~= 0)) then
+            return 'trust';
+        end
+    end
+
+    -- Trust server ids are zone entity ids, unlike player ids. When zoning,
+    -- Ashita can retain those stale trust ids even after the actors despawn.
+    server_id = tonumber(server_id) or 0;
+    if (server_id >= 0x01000000) then
+        return 'trust';
+    end
+
+    return 'player';
+end
+
+local function mark_config_changed()
+    state.config_save_message = nil;
+    state.config_save_message_color = nil;
+end
+
+local function job_order_index(job)
+    job = normalize_job_key(job);
+    for index, value in ipairs(JOB_ORDER) do
+        if (value == job) then
+            return index;
+        end
+    end
+
+    return 1;
+end
+
+local function current_config_job_key()
+    local current_job = current_player_job_key();
+    if (current_job == 'default') then
+        current_job = 'BST';
+    end
+
+    local selected = normalize_job_key(state.config_job_key);
+    if (#selected == 0) then
+        selected = current_job;
+    end
+
+    state.config_job_key = selected;
+    return selected;
+end
+
+local function step_config_job(delta)
+    local index = job_order_index(current_config_job_key());
+    index = ((index - 1 + delta) % #JOB_ORDER) + 1;
+    state.config_job_key = JOB_ORDER[index];
+    mark_config_changed();
+end
+
+local function path_join(left, right)
+    left = tostring(left or '');
+    right = tostring(right or '');
+    if (#left == 0) then
+        return right;
+    end
+
+    local last = left:sub(#left);
+    if (last == '\\' or last == '/') then
+        return left .. right;
+    end
+
+    return left .. '\\' .. right;
+end
+
+local function config_file_path()
+    return path_join(addon.path, 'ashitaframes_config.lua');
+end
+
+local function bool_text(value)
+    return value == true and 'true' or 'false';
+end
+
+local function buff_list_text(buffs)
+    local normalized = normalize_buff_list(buffs);
+    if (#normalized == 0) then
+        return '{ }';
+    end
+
+    local pieces = { };
+    for _, key in ipairs(normalized) do
+        table.insert(pieces, ("'%s'"):fmt(key));
+    end
+
+    return ('{ %s }'):fmt(table.concat(pieces, ', '));
+end
+
+local function zone_id_list_text(zone_ids)
+    local normalized = normalize_zone_id_list(zone_ids);
+    if (#normalized == 0) then
+        return '{ }';
+    end
+
+    local pieces = { };
+    for _, zone_id in ipairs(normalized) do
+        table.insert(pieces, tostring(zone_id));
+    end
+
+    return ('{ %s }'):fmt(table.concat(pieces, ', '));
+end
+
+local function config_key_text(key)
+    if (key == 'default' or key:match('^%a[%w_]*$') ~= nil) then
+        return key;
+    end
+
+    return ('[%q]'):fmt(key);
+end
+
+local function reminder_profile_keys(reminders)
+    local keys = { 'default' };
+    local seen = { default = true };
+
+    for _, job in ipairs(JOB_ORDER) do
+        if (type(reminders[job]) == 'table') then
+            table.insert(keys, job);
+            seen[job] = true;
+        end
+    end
+
+    local extra = { };
+    for key, value in pairs(reminders) do
+        if (type(key) == 'string' and not seen[key] and type(value) == 'table') then
+            table.insert(extra, key);
+        end
+    end
+    table.sort(extra);
+
+    for _, key in ipairs(extra) do
+        table.insert(keys, key);
+    end
+
+    return keys;
+end
+
+local function append_profile_config(lines, key, profile)
+    profile = normalize_reminder_profile(profile, state.settings.buff_reminders.default);
+
+    table.insert(lines, ('            %s = {'):fmt(config_key_text(key)));
+    table.insert(lines, ('                enabled = %s,'):fmt(bool_text(profile.enabled)));
+    table.insert(lines, ('                self = %s,'):fmt(bool_text(profile.self)));
+    table.insert(lines, ('                players = %s,'):fmt(bool_text(profile.players)));
+    table.insert(lines, ('                trusts = %s,'):fmt(bool_text(profile.trusts)));
+    table.insert(lines, ('                buffs = %s,'):fmt(buff_list_text(profile.buffs)));
+    table.insert(lines, '            },');
+end
+
+local function capture_runtime_settings_for_save()
+    state.settings.visible = state.visible[1] == true;
+    state.settings.party_window_x = state.party_window_x;
+    state.settings.party_window_y = state.party_window_y;
+    state.settings.target_window_x = state.target_window_x;
+    state.settings.target_window_y = state.target_window_y;
+    state.settings.buff_reminders = normalize_buff_reminders(state.settings.buff_reminders);
+    state.settings.buff_reminder_suppressed_zone_ids = normalize_zone_id_list(state.settings.buff_reminder_suppressed_zone_ids);
+
+    return normalize_settings(state.settings);
+end
+
+local function config_text_from_settings(settings)
+    local reminders = settings.buff_reminders or normalize_buff_reminders(nil);
+    local lines = {
+        'return {',
+        '    settings = {',
+        ('        visible = %s,'):fmt(bool_text(settings.visible)),
+        ('        locked = %s,'):fmt(bool_text(settings.locked)),
+        '',
+        ('        show_target = %s,'):fmt(bool_text(settings.show_target)),
+        ('        show_party = %s,'):fmt(bool_text(settings.show_party)),
+        ('        show_alliance = %s,'):fmt(bool_text(settings.show_alliance)),
+        ('        show_empty_target = %s,'):fmt(bool_text(settings.show_empty_target)),
+        '',
+        ('        same_zone_dim = %s,'):fmt(bool_text(settings.same_zone_dim)),
+        ('        show_jobs = %s,'):fmt(bool_text(settings.show_jobs)),
+        ('        show_percent = %s,'):fmt(bool_text(settings.show_percent)),
+        ('        show_tp = %s,'):fmt(bool_text(settings.show_tp)),
+        ('        show_buffs = %s,'):fmt(bool_text(settings.show_buffs)),
+        ('        show_buff_reminders = %s,'):fmt(bool_text(settings.show_buff_reminders)),
+        ('        hide_buff_reminders_in_towns = %s,'):fmt(bool_text(settings.hide_buff_reminders_in_towns)),
+        ('        buff_reminder_suppressed_zone_ids = %s,'):fmt(zone_id_list_text(settings.buff_reminder_suppressed_zone_ids)),
+        ('        max_buffs = %d,'):fmt(settings.max_buffs),
+        '',
+        ('        party_window_x = %d,'):fmt(state.party_window_x),
+        ('        party_window_y = %d,'):fmt(state.party_window_y),
+        ('        target_window_x = %d,'):fmt(state.target_window_x),
+        ('        target_window_y = %d,'):fmt(state.target_window_y),
+        '',
+        ('        frame_width = %d,'):fmt(settings.frame_width),
+        ('        row_height = %d,'):fmt(settings.row_height),
+        ('        row_gap = %d,'):fmt(settings.row_gap),
+        ('        opacity = %d,'):fmt(settings.opacity),
+        '',
+        '        buff_reminders = {',
+    };
+
+    for _, key in ipairs(reminder_profile_keys(reminders)) do
+        append_profile_config(lines, key, reminders[key]);
+        table.insert(lines, '');
+    end
+
+    table.insert(lines, '        },');
+    table.insert(lines, '    },');
+    table.insert(lines, '}');
+    table.insert(lines, '');
+
+    return table.concat(lines, '\n');
+end
+
+local function save_config()
+    local settings = capture_runtime_settings_for_save();
+    local path = config_file_path();
+    local file, error_message = io.open(path, 'w');
+    if (file == nil) then
+        return false, tostring(error_message or 'open failed');
+    end
+
+    file:write(config_text_from_settings(settings));
+    file:close();
+
+    state.settings = settings;
+    return true, ('Saved %s.'):fmt(path);
+end
+
+local function party_member_unit(party, index, self_zone, reminder_job, reminders_suppressed)
     local active = truthy(safe_read(function () return party:GetMemberIsActive(index); end, false));
     local name = clean_string(safe_read(function () return party:GetMemberName(index); end, ''));
     local server_id = safe_read(function () return party:GetMemberServerId(index); end, 0);
@@ -499,12 +1446,20 @@ local function party_member_unit(party, index, self_zone)
     local zone_id = safe_read(function () return party:GetMemberZone(index); end, nil);
     local same_zone = self_zone == nil or zone_id == nil or zone_id == self_zone;
     local tag = index == 0 and 'YOU' or tostring(index + 1);
+    local category = party_member_category(index, target_index, server_id);
+
+    if (category == 'trust' and same_zone == false) then
+        return nil;
+    end
 
     return {
         kind = 'party',
         tag = tag,
         index = index,
         name = #name > 0 and name or ('Slot %d'):fmt(index + 1),
+        category = category,
+        reminder_job = reminder_job,
+        reminders_suppressed = reminders_suppressed == true,
         hp_pct = safe_read(function () return party:GetMemberHPPercent(index); end, nil),
         mp_pct = safe_read(function () return party:GetMemberMPPercent(index); end, nil),
         tp = safe_read(function () return party:GetMemberTP(index); end, nil),
@@ -513,7 +1468,7 @@ local function party_member_unit(party, index, self_zone)
             safe_read(function () return party:GetMemberMainJobLevel(index); end, nil),
             safe_read(function () return party:GetMemberSubJob(index); end, nil),
             safe_read(function () return party:GetMemberSubJobLevel(index); end, nil)),
-        buffs = party_member_buffs(party, index, server_id, same_zone),
+        buffs = party_member_buffs(party, index, server_id, same_zone, name),
         same_zone = same_zone,
         dim = state.settings.same_zone_dim and not same_zone,
     };
@@ -531,11 +1486,15 @@ local function collect_party_units()
     end
 
     local self_zone = safe_read(function () return party:GetMemberZone(0); end, nil);
+    local reminder_job = current_player_job_key(party);
+    local reminders_suppressed = buff_reminders_suppressed_for_zone(self_zone);
     local max_index = state.settings.show_alliance and 17 or 5;
     local units = { };
 
+    sync_observed_buffs_for_party(party, self_zone);
+
     for index = 0, max_index, 1 do
-        local unit = party_member_unit(party, index, self_zone);
+        local unit = party_member_unit(party, index, self_zone, reminder_job, reminders_suppressed);
         if (unit ~= nil) then
             table.insert(units, unit);
         end
@@ -676,31 +1635,62 @@ local function unit_right_label(unit)
     return table.concat(pieces, ' ');
 end
 
-local function draw_buff_icon_row(unit, x, y, width)
+local function draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint)
+    local pad = 3;
+    local min = { icon_x - pad, icon_y - pad };
+    local max = { icon_x + BUFF_ICON_SIZE + pad, icon_y + BUFF_ICON_SIZE + pad };
+
+    if (item.state == 'missing') then
+        local pulse = (math.sin(os.clock() * 7.0) + 1.0) * 0.5;
+        local pulse_alpha = alpha * (0.62 + (pulse * 0.38));
+        local border_color = pulse > 0.5 and COLORS.buff_missing_flash or COLORS.buff_missing_border;
+
+        draw_list:AddRectFilled(min, max, color_u32(apply_alpha(COLORS.buff_missing_bg, pulse_alpha)), 4.0);
+        draw_list:AddRect(min, max, color_u32(apply_alpha(border_color, alpha)), 4.0, ImDrawCornerFlags_All, 3.0);
+    else
+        draw_list:AddRectFilled(min, max, color_u32(apply_alpha(COLORS.shadow, alpha * 0.56)), 4.0);
+        draw_list:AddRect(min, max, color_u32(apply_alpha(COLORS.buff_active_border, alpha)), 4.0, ImDrawCornerFlags_All, 1.0);
+    end
+
+    imgui.SetCursorScreenPos({ icon_x, icon_y });
+    imgui.Image(item.handle, { BUFF_ICON_SIZE, BUFF_ICON_SIZE }, { 0, 0 }, { 1, 1 }, tint, { 0, 0, 0, 0 });
+
+    if (item.state == 'missing') then
+        local mark_color = color_u32(apply_alpha(COLORS.buff_missing_border, alpha));
+        draw_list:AddLine({ icon_x + 7, icon_y + 7 }, { icon_x + BUFF_ICON_SIZE - 7, icon_y + BUFF_ICON_SIZE - 7 }, mark_color, 3.0);
+        draw_list:AddLine({ icon_x + BUFF_ICON_SIZE - 7, icon_y + 7 }, { icon_x + 7, icon_y + BUFF_ICON_SIZE - 7 }, mark_color, 3.0);
+    end
+end
+
+local function draw_buff_icon_row(unit, x, y, width, alpha)
     if (not state.settings.show_buffs or unit.kind ~= 'party') then
         return;
     end
 
-    local items = buff_icon_items(unit.buffs);
+    local items = buff_icon_items(unit);
     if (#items == 0) then
         return;
     end
 
+    local draw_list = imgui.GetWindowDrawList();
     local tint = unit.dim and { 0.62, 0.62, 0.62, 0.62 } or { 1.00, 1.00, 1.00, 1.00 };
     local icon_x = x + 8;
-    local icon_y = y + 21;
+    local icon_y = y + 24;
     local max_x = x + width - 8;
 
     for _, item in ipairs(items) do
-        if ((icon_x + BUFF_ICON_SIZE) > max_x) then
+        if ((icon_x + BUFF_ICON_SIZE + 3) > max_x) then
             break;
         end
 
-        imgui.SetCursorScreenPos({ icon_x, icon_y });
-        imgui.Image(item.handle, { BUFF_ICON_SIZE, BUFF_ICON_SIZE }, { 0, 0 }, { 1, 1 }, tint, { 0, 0, 0, 0 });
+        draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint);
         if (imgui.IsItemHovered()) then
             imgui.BeginTooltip();
-            imgui.Text(item.name);
+            if (item.state == 'missing') then
+                imgui.TextColored(COLORS.warning, ('Missing: %s'):fmt(item.name));
+            else
+                imgui.Text(item.name);
+            end
             imgui.EndTooltip();
         end
 
@@ -739,7 +1729,7 @@ local function draw_unit_row(unit, width, row_height)
         draw_text(draw_list, x + width - right_width - 8, y + 5, COLORS.text_muted, right);
     end
 
-    draw_buff_icon_row(unit, x, y, width);
+    draw_buff_icon_row(unit, x, y, width, alpha);
 
     draw_bar(draw_list, bar_x, hp_y, bar_w, 6, unit.hp_pct, hp_color, alpha);
 
@@ -757,6 +1747,14 @@ local function draw_unit_row(unit, width, row_height)
     end
 
     imgui.Dummy({ width, row_height + settings.row_gap });
+end
+
+local function effective_row_height(unit)
+    if (unit.kind == 'party' and state.settings.show_buffs) then
+        return math.max(state.settings.row_height, LIMITS.party_row_height_with_buffs_min);
+    end
+
+    return state.settings.row_height;
 end
 
 local function render_window(title, open_state, x, y, width, units, position_callback)
@@ -781,7 +1779,7 @@ local function render_window(title, open_state, x, y, width, units, position_cal
         position_callback(current_x, current_y);
 
         for _, unit in ipairs(units) do
-            draw_unit_row(unit, width, settings.row_height);
+            draw_unit_row(unit, width, effective_row_height(unit));
         end
     end
 
@@ -849,6 +1847,113 @@ local function render_int_control(label, id, value, min_value, max_value, apply_
     end
 end
 
+local function render_profile_bool(profile, field, label, id)
+    local value = profile[field] == true;
+    if (imgui.Checkbox(('%s##ashitaframes_%s'):fmt(label, id), { value })) then
+        profile[field] = not value;
+        mark_config_changed();
+    end
+end
+
+local function render_profile_buff_toggle(profile, key, label)
+    if (not reminder_spell_available(key)) then
+        return false;
+    end
+
+    local enabled = buff_list_has(profile.buffs, key);
+    if (imgui.Checkbox(('%s##ashitaframes_buff_reminder_%s'):fmt(label, key), { enabled })) then
+        set_profile_buff_enabled(profile, key, not enabled);
+        mark_config_changed();
+    end
+
+    return true;
+end
+
+local function render_buff_reminder_config()
+    imgui.Separator();
+    imgui.TextColored(COLORS.accent, 'Buff Reminders');
+
+    local hide_in_towns = state.settings.hide_buff_reminders_in_towns == true;
+    if (imgui.Checkbox('Hide Missing In Towns##ashitaframes_hide_buff_reminders_in_towns', { hide_in_towns })) then
+        state.settings.hide_buff_reminders_in_towns = not hide_in_towns;
+        mark_config_changed();
+    end
+
+    local zone_id = current_player_zone_id();
+    local zone_label = zone_id ~= nil and ('%s (%d)'):fmt(zone_name(zone_id), zone_id) or 'Unknown';
+    local zone_suppressed = buff_reminders_suppressed_for_zone(zone_id);
+    imgui.TextColored(COLORS.text_muted, ('Current zone: %s - %s'):fmt(zone_label, zone_suppressed and 'hidden' or 'shown'));
+
+    if (zone_id ~= nil and not (state.settings.hide_buff_reminders_in_towns and TOWN_ZONE_IDS[math.floor(zone_id + 0.5)] == true)) then
+        local explicit_suppressed = zone_list_has(state.settings.buff_reminder_suppressed_zone_ids, zone_id);
+        if (explicit_suppressed) then
+            if (imgui.Button('Allow Current Zone##ashitaframes_allow_current_zone')) then
+                set_zone_suppressed(zone_id, false);
+                mark_config_changed();
+            end
+        else
+            if (imgui.Button('Suppress Current Zone##ashitaframes_suppress_current_zone')) then
+                set_zone_suppressed(zone_id, true);
+                mark_config_changed();
+            end
+        end
+    end
+
+    local current_job = current_player_job_key();
+    local selected_job = current_config_job_key();
+
+    if (imgui.Button('<##ashitaframes_reminder_job_prev', { 26, 0 })) then
+        step_config_job(-1);
+        selected_job = current_config_job_key();
+    end
+    imgui.SameLine(0, 6);
+    imgui.Text(('Job: %s'):fmt(selected_job));
+    imgui.SameLine(0, 6);
+    if (imgui.Button('>##ashitaframes_reminder_job_next', { 26, 0 })) then
+        step_config_job(1);
+        selected_job = current_config_job_key();
+    end
+    imgui.SameLine(0, 10);
+    if (imgui.Button('Current##ashitaframes_reminder_job_current')) then
+        if (current_job ~= 'default') then
+            state.config_job_key = current_job;
+            selected_job = current_config_job_key();
+            mark_config_changed();
+        end
+    end
+    imgui.SameLine(0, 8);
+    imgui.TextColored(COLORS.text_muted, ('Now: %s'):fmt(current_job));
+
+    local profile = ensure_reminder_profile(selected_job);
+    render_profile_bool(profile, 'enabled', 'Enable Job Profile', ('reminder_%s_enabled'):fmt(selected_job));
+
+    imgui.TextColored(COLORS.text_muted, 'Units');
+    render_profile_bool(profile, 'self', 'Self', ('reminder_%s_self'):fmt(selected_job));
+    imgui.SameLine(0, 12);
+    render_profile_bool(profile, 'players', 'Players', ('reminder_%s_players'):fmt(selected_job));
+    imgui.SameLine(0, 12);
+    render_profile_bool(profile, 'trusts', 'Trusts', ('reminder_%s_trusts'):fmt(selected_job));
+
+    imgui.TextColored(COLORS.text_muted, 'Buffs');
+    local any_buff = false;
+    if (render_profile_buff_toggle(profile, 'protect', 'Protect')) then
+        any_buff = true;
+    end
+    if (reminder_spell_available('shell')) then
+        if (any_buff) then
+            imgui.SameLine(0, 12);
+        end
+        if (render_profile_buff_toggle(profile, 'shell', 'Shell')) then
+            any_buff = true;
+        end
+    end
+    if (not any_buff) then
+        imgui.TextColored(COLORS.text_muted, 'No supported buffs available for current job/subjob.');
+    elseif (buff_list_has(profile.buffs, 'shell') and not reminder_spell_available('shell')) then
+        imgui.TextColored(COLORS.text_muted, 'Shell is configured on but unavailable on current job/subjob.');
+    end
+end
+
 local function render_config_window()
     if (not state.config_visible[1]) then
         return;
@@ -862,62 +1967,96 @@ local function render_config_window()
         if (imgui.Checkbox('Show Frames##ashitaframes_show_frames', { visible })) then
             state.visible[1] = not visible;
             state.settings.visible = state.visible[1];
+            mark_config_changed();
         end
 
         local locked = state.settings.locked == true;
         if (imgui.Checkbox('Lock Frames##ashitaframes_lock_frames', { locked })) then
             state.settings.locked = not locked;
+            mark_config_changed();
         end
 
         local show_target = state.settings.show_target == true;
         if (imgui.Checkbox('Target Frame##ashitaframes_show_target', { show_target })) then
             state.settings.show_target = not show_target;
+            mark_config_changed();
         end
 
         local show_party = state.settings.show_party == true;
         if (imgui.Checkbox('Party Frame##ashitaframes_show_party', { show_party })) then
             state.settings.show_party = not show_party;
+            mark_config_changed();
         end
 
         local show_alliance = state.settings.show_alliance == true;
         if (imgui.Checkbox('Alliance Slots##ashitaframes_show_alliance', { show_alliance })) then
             state.settings.show_alliance = not show_alliance;
+            mark_config_changed();
         end
 
         local same_zone_dim = state.settings.same_zone_dim == true;
         if (imgui.Checkbox('Dim Different Zone##ashitaframes_same_zone_dim', { same_zone_dim })) then
             state.settings.same_zone_dim = not same_zone_dim;
+            mark_config_changed();
         end
 
         local show_buffs = state.settings.show_buffs == true;
         if (imgui.Checkbox('Party Buffs##ashitaframes_show_buffs', { show_buffs })) then
             state.settings.show_buffs = not show_buffs;
             state.settings = normalize_settings(state.settings);
+            mark_config_changed();
         end
+
+        local show_buff_reminders = state.settings.show_buff_reminders == true;
+        if (imgui.Checkbox('Missing Buff Reminders##ashitaframes_show_buff_reminders', { show_buff_reminders })) then
+            state.settings.show_buff_reminders = not show_buff_reminders;
+            mark_config_changed();
+        end
+
+        render_buff_reminder_config();
 
         imgui.Separator();
         imgui.TextColored(COLORS.accent, 'Layout');
         render_int_control('Frame Width', 'frame_width', state.settings.frame_width, LIMITS.width_min, LIMITS.width_max, function (value)
             state.settings.frame_width = clamp_int(value, LIMITS.width_min, LIMITS.width_max);
+            mark_config_changed();
         end);
-        local row_height_min = state.settings.show_buffs and LIMITS.row_height_with_buffs_min or LIMITS.row_height_min;
-        render_int_control('Row Height', 'row_height', state.settings.row_height, row_height_min, LIMITS.row_height_max, function (value)
-            state.settings.row_height = clamp_int(value, row_height_min, LIMITS.row_height_max);
+        render_int_control('Base Row Height', 'row_height', state.settings.row_height, LIMITS.row_height_min, LIMITS.row_height_max, function (value)
+            state.settings.row_height = clamp_int(value, LIMITS.row_height_min, LIMITS.row_height_max);
+            mark_config_changed();
         end);
         render_int_control('Row Gap', 'row_gap', state.settings.row_gap, LIMITS.row_gap_min, LIMITS.row_gap_max, function (value)
             state.settings.row_gap = clamp_int(value, LIMITS.row_gap_min, LIMITS.row_gap_max);
+            mark_config_changed();
         end);
         render_int_control('Max Buffs', 'max_buffs', state.settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max, function (value)
             state.settings.max_buffs = clamp_int(value, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
+            mark_config_changed();
         end, 'buffs');
         render_int_control('Opacity', 'opacity', state.settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max, function (value)
             state.settings.opacity = clamp_int(value, LIMITS.opacity_min, LIMITS.opacity_max);
+            mark_config_changed();
         end, '%');
 
         imgui.Separator();
         imgui.Text(('Party pos: %d, %d'):fmt(state.party_window_x, state.party_window_y));
         imgui.Text(('Target pos: %d, %d'):fmt(state.target_window_x, state.target_window_y));
-        imgui.Text('Runtime changes are not persisted yet.');
+
+        if (imgui.Button('Save##ashitaframes_config_save')) then
+            local ok, message = save_config();
+            state.config_save_message = ok and 'Saved.' or 'Save failed.';
+            state.config_save_message_color = ok and COLORS.accent or COLORS.warning;
+            if (ok) then
+                log_info(message);
+            else
+                log_error(message);
+            end
+        end
+
+        if (state.config_save_message ~= nil) then
+            imgui.SameLine(0, 8);
+            imgui.TextColored(state.config_save_message_color or COLORS.accent, state.config_save_message);
+        end
 
         if (state.config_error ~= nil) then
             imgui.Separator();
@@ -936,14 +2075,50 @@ local function print_help()
     print(chat.header(addon.name):append(chat.message('/ashitaframes reload | status')));
 end
 
+local function observed_buff_summary()
+    local names = { };
+
+    for name, buffs in pairs(state.observed_buffs) do
+        local buff_names = { };
+        if (type(buffs) == 'table') then
+            for key, enabled in pairs(buffs) do
+                if (enabled == true) then
+                    table.insert(buff_names, key);
+                end
+            end
+        end
+
+        if (#buff_names > 0) then
+            table.sort(buff_names);
+            table.insert(names, ('%s:%s'):fmt(name, table.concat(buff_names, '+')));
+        end
+    end
+
+    if (#names == 0) then
+        return 'none';
+    end
+
+    table.sort(names);
+    return table.concat(names, ', ');
+end
+
 local function print_status()
-    log_info(('visible=%s locked=%s target=%s party=%s alliance=%s buffs=%s maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) target=(%d,%d)'):fmt(
+    local reminder_job = current_player_job_key();
+    local reminder_profile = reminder_profile_for_job(reminder_job);
+
+    log_info(('visible=%s locked=%s target=%s party=%s alliance=%s buffs=%s reminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) target=(%d,%d)'):fmt(
         tostring(state.visible[1] == true),
         tostring(state.settings.locked == true),
         tostring(state.settings.show_target == true),
         tostring(state.settings.show_party == true),
         tostring(state.settings.show_alliance == true),
         tostring(state.settings.show_buffs == true),
+        tostring(state.settings.show_buff_reminders == true),
+        reminder_job,
+        reminder_profile.enabled and 'on' or 'off',
+        observed_buff_summary(),
+        state.observed_text_events,
+        state.observed_log_events,
         state.settings.max_buffs,
         state.settings.frame_width,
         state.settings.row_height,
@@ -955,6 +2130,229 @@ local function print_status()
 
     if (state.config_error ~= nil) then
         log_error('Config load warning: ' .. state.config_error);
+    end
+end
+
+local function clean_event_message(message)
+    local text = tostring(message or ''):gsub('\r', ' '):gsub('\n', ' '):gsub('%z', '');
+    text = text:gsub('.', function (character)
+        local value = character:byte();
+        if (value ~= nil and value < 32 and value ~= 9) then
+            return '';
+        end
+
+        return character;
+    end);
+
+    while true do
+        local changed = 0;
+        text, changed = text:gsub('^%[%d%d:%d%d:%d%d%]%s*', '', 1);
+        if (changed == 0) then
+            break;
+        end
+    end
+
+    return clean_string(text);
+end
+
+local function current_party_contains_name(name)
+    local target_key = observed_name_key(name);
+    if (target_key == nil) then
+        return false;
+    end
+
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    local party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
+    if (party == nil) then
+        return false;
+    end
+
+    local self_zone = safe_read(function () return party:GetMemberZone(0); end, nil);
+    for index = 0, 5, 1 do
+        local active = truthy(safe_read(function () return party:GetMemberIsActive(index); end, false));
+        local member_name = clean_string(safe_read(function () return party:GetMemberName(index); end, ''));
+        local member_zone = safe_read(function () return party:GetMemberZone(index); end, nil);
+        local same_zone = self_zone == nil or member_zone == nil or member_zone == self_zone;
+
+        if (active and same_zone and observed_name_key(member_name) == target_key) then
+            return true;
+        end
+    end
+
+    return false;
+end
+
+local function set_observed_buff(name, key, enabled)
+    local name_key = observed_name_key(name);
+    key = normalize_buff_key(key);
+    if (name_key == nil or key == nil or buff_id_for_key(key) == nil or not current_party_contains_name(name)) then
+        return false;
+    end
+
+    if (enabled == true) then
+        state.observed_buffs[name_key] = state.observed_buffs[name_key] or { };
+        state.observed_buffs[name_key][key] = true;
+        return true;
+    end
+
+    local entry = state.observed_buffs[name_key];
+    if (type(entry) ~= 'table') then
+        return false;
+    end
+
+    entry[key] = nil;
+    for _, value in pairs(entry) do
+        if (value == true) then
+            return true;
+        end
+    end
+
+    state.observed_buffs[name_key] = nil;
+    return true;
+end
+
+local function observed_buff_event(text)
+    local name, buff = text:match('^(.-) gains the effect of (.-)%.?$');
+    if (name ~= nil and buff ~= nil) then
+        return name, buff, true;
+    end
+
+    name, buff = text:match('^(.-) loses the effect of (.-)%.?$');
+    if (name ~= nil and buff ~= nil) then
+        return name, buff, false;
+    end
+
+    name, buff = text:match("^(.-)'s (.-) effect wears off%.?$");
+    if (name ~= nil and buff ~= nil) then
+        return name, buff, false;
+    end
+
+    return nil, nil, nil;
+end
+
+local function process_observed_buff_text(message)
+    local name, buff, enabled = observed_buff_event(clean_event_message(message));
+    local key = buff_key_from_name(buff);
+    if (name == nil or key == nil) then
+        return false;
+    end
+
+    return set_observed_buff(name, key, enabled);
+end
+
+local function current_chat_log_path()
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    local party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
+    local character = party ~= nil and clean_string(safe_read(function () return party:GetMemberName(0); end, '')) or '';
+    if (#character == 0) then
+        return nil;
+    end
+
+    local install_path = clean_string(safe_read(function () return AshitaCore:GetInstallPath(); end, ''));
+    if (#install_path == 0) then
+        return nil;
+    end
+
+    return ('%schatlogs\\%s_%s.log'):fmt(install_path, character, os.date('%Y.%m.%d'));
+end
+
+local function seed_observed_buffs_from_chat_log()
+    local path = current_chat_log_path();
+    if (path == nil) then
+        return;
+    end
+
+    local file = io.open(path, 'r');
+    if (file == nil) then
+        return;
+    end
+
+    local lines = { };
+    for line in file:lines() do
+        table.insert(lines, line);
+        if (#lines > 500) then
+            table.remove(lines, 1);
+        end
+    end
+    local position = file:seek('end') or 0;
+    file:close();
+
+    local start_index = 1;
+    for index = #lines, 1, -1 do
+        if (clean_event_message(lines[index]):find('^=== Area: ') ~= nil) then
+            start_index = index + 1;
+            break;
+        end
+    end
+
+    for index = start_index, #lines, 1 do
+        process_observed_buff_text(lines[index]);
+    end
+
+    state.observed_log_path = path;
+    state.observed_log_position = position;
+end
+
+local function poll_observed_buffs_from_chat_log()
+    local now = os.time();
+    if (state.observed_log_last_check == now) then
+        return;
+    end
+    state.observed_log_last_check = now;
+
+    local path = current_chat_log_path();
+    if (path == nil) then
+        return;
+    end
+
+    if (state.observed_log_path ~= path) then
+        state.observed_log_path = path;
+        state.observed_log_position = 0;
+        seed_observed_buffs_from_chat_log();
+        return;
+    end
+
+    local file = io.open(path, 'r');
+    if (file == nil) then
+        return;
+    end
+
+    local size = file:seek('end') or 0;
+    local position = tonumber(state.observed_log_position) or 0;
+    if (position <= 0 or position > size) then
+        state.observed_log_position = size;
+        file:close();
+        return;
+    end
+
+    file:seek('set', position);
+    for line in file:lines() do
+        if (process_observed_buff_text(line)) then
+            state.observed_log_events = state.observed_log_events + 1;
+        end
+    end
+
+    state.observed_log_position = file:seek() or size;
+    file:close();
+end
+
+local function handle_text_in(e)
+    local candidates = {
+        e.message,
+        e.message_modified,
+        e.modified_message,
+    };
+
+    local seen = { };
+    for _, message in ipairs(candidates) do
+        local text = tostring(message or '');
+        if (#text > 0 and seen[text] ~= true) then
+            seen[text] = true;
+            if (process_observed_buff_text(text)) then
+                state.observed_text_events = state.observed_text_events + 1;
+                return;
+            end
+        end
     end
 end
 
@@ -1023,6 +2421,7 @@ end
 
 ashita.events.register('load', 'load_cb', function ()
     load_config();
+    seed_observed_buffs_from_chat_log();
     log_info('Loaded. Use /ashitaframes config to position frames.');
 end);
 
@@ -1030,7 +2429,13 @@ ashita.events.register('command', 'command_cb', function (e)
     handle_command(e);
 end);
 
+ashita.events.register('text_in', 'text_in_cb', function (e)
+    handle_text_in(e);
+end);
+
 ashita.events.register('d3d_present', 'present_cb', function ()
+    poll_observed_buffs_from_chat_log();
+
     if (not state.visible[1]) then
         render_config_window();
         return;

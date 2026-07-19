@@ -12,13 +12,24 @@ clean while important unit information remains visible elsewhere on screen.
 - Draws a draggable target frame with name, HP percent, and distance when
   available.
 - Draws draggable party frames for the first party by default, with optional
-  alliance slots.
+  alliance slots. Trust slots that linger in Ashita memory after zoning are
+  hidden once they are no longer in your current zone.
 - Shows HP, MP, TP, job/subjob, level, and same-zone dimming where Ashita
   exposes that data.
-- Shows compact party status icons for mapped buffs when Ashita exposes them
-  for the first party. Protect and Shell are mapped first.
-- Includes an in-game configuration window for visibility, locking, sizing,
-  opacity, party buff display, and alliance display.
+- Shows compact party status icons for mapped buffs from Ashita status memory
+  when available, plus observed party effect messages for trusts. Protect and
+  Shell are mapped first.
+- Shows large missing-buff reminders for mapped buffs configured per current
+  player job. Missing reminders flash with a crossed icon; active buffs show
+  as normal icons. Trust reminders clear after observed gain messages and reset
+  on zoning or party changes, even if another chat addon modifies or hides the
+  native incoming line. On load, recent current-zone effect messages seed the
+  observed state, and a bounded live chat-log tail keeps trust buffs updated
+  after reloads and new casts.
+  Protect and Shell are mapped first.
+- Includes a persistent in-game configuration window for visibility, locking,
+  sizing, opacity, party buff display, missing-buff reminders, and alliance
+  display.
 - Provides local UI commands only. It does not target, cast, click-cast, send
   gameplay commands, inject packets, write memory, or automate actions.
 
@@ -34,6 +45,8 @@ This addon is display-only. Keep it in the CatsEyeXI T0/T2 lane:
 
 If click-casting or frame-click targeting is ever considered, treat that as a
 separate active-helper design and get CatsEyeXI policy review before normal use.
+Right-click buff cancellation belongs in the same active-helper category unless
+it is delegated to an approved addon; AshitaFrames does not do it.
 
 ## Install
 
@@ -88,6 +101,22 @@ Short alias:
 
 ## Configure
 
+Open the in-game configuration window:
+
+```text
+/ashitaframes config
+```
+
+The Buff Reminders section lets you pick a main-job profile, enable reminders
+for that job, choose self/player/trust targets, and toggle Protect or Shell.
+Use Save to write the current window layout and reminder settings to
+`ashitaframes_config.lua`. Reminder options are filtered to spells your current
+main/sub job can actually cast and that your character has learned. Missing
+reminder flashes are hidden in towns by default; the config window can also
+suppress or allow the current non-town zone.
+
+Manual config is still supported:
+
 Edit:
 
 ```text
@@ -110,6 +139,9 @@ return {
         show_percent = true,
         show_tp = true,
         show_buffs = true,
+        show_buff_reminders = true,
+        hide_buff_reminders_in_towns = true,
+        buff_reminder_suppressed_zone_ids = { },
         max_buffs = 8,
         party_window_x = 36,
         party_window_y = 362,
@@ -119,13 +151,37 @@ return {
         row_height = 56,
         row_gap = 5,
         opacity = 88,
+
+        buff_reminders = {
+            default = {
+                enabled = true,
+                self = true,
+                players = true,
+                trusts = true,
+                buffs = { 'protect', 'shell' },
+            },
+
+            BST = {
+                enabled = true,
+                self = true,
+                players = true,
+                trusts = true,
+                buffs = { 'protect' },
+            },
+        },
     },
 }
 ```
 
-Runtime changes made in the config window are not persisted yet. When a layout
-feels right, copy the positions and sizing shown by `/ashitaframes status` into
-`ashitaframes_config.lua`.
+`buff_reminders` is keyed by your current main job. Each profile can enable or
+disable reminders for yourself (`self`), other players (`players`), and trusts
+(`trusts`). Supported reminder keys are currently `protect` and `shell`;
+configured reminders only display when the spell is learned and usable on your
+current main/sub job.
+
+`hide_buff_reminders_in_towns` hides missing-buff flashes in town and safe hub
+zones. Add zone ids to `buff_reminder_suppressed_zone_ids` to hide missing
+reminders in additional zones.
 
 ## Development
 

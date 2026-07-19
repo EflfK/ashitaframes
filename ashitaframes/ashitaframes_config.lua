@@ -13,6 +13,9 @@ return {
         show_percent = true,
         show_tp = true,
         show_buffs = true,
+        show_buff_reminders = true,
+        hide_buff_reminders_in_towns = true,
+        buff_reminder_suppressed_zone_ids = { },
         max_buffs = 8,
 
         party_window_x = 36,
@@ -24,6 +27,24 @@ return {
         row_height = 56,
         row_gap = 5,
         opacity = 88,
+
+        buff_reminders = {
+            default = {
+                enabled = true,
+                self = true,
+                players = true,
+                trusts = true,
+                buffs = { 'protect', 'shell' },
+            },
+
+            BST = {
+                enabled = true,
+                self = true,
+                players = true,
+                trusts = true,
+                buffs = { 'protect' },
+            },
+        },
     },
 }
 
