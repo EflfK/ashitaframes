@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.23';
+addon.version   = '0.3.26';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -57,6 +57,7 @@ local DEFAULT_SETTINGS = {
     same_zone_dim = true,
     show_jobs = true,
     show_percent = true,
+    show_mp = true,
     show_tp = true,
     show_buffs = true,
     show_buff_reminders = true,
@@ -75,26 +76,47 @@ local DEFAULT_SETTINGS = {
     target_window_x = 36,
     target_window_y = 296,
     frame_width = 232,
+    height = -1,
     row_height = 56,
     row_gap = 5,
     opacity = 88,
     self_frame_width = -1,
+    self_height = -1,
     self_row_height = -1,
     self_row_gap = -1,
     self_opacity = -1,
+    self_show_mp = 'default',
+    self_show_tp = 'default',
+    self_mp_text_threshold = -1,
+    self_tp_text_threshold = -1,
     party_frame_width = -1,
+    party_height = -1,
     party_row_height = -1,
     party_row_gap = -1,
     party_opacity = -1,
+    party_show_mp = 'default',
+    party_show_tp = 'default',
+    party_mp_text_threshold = -1,
+    party_tp_text_threshold = -1,
     party_size_layouts = { },
     pet_frame_width = -1,
+    pet_height = -1,
     pet_row_height = -1,
     pet_row_gap = -1,
     pet_opacity = -1,
+    pet_show_mp = 'default',
+    pet_show_tp = 'default',
+    pet_mp_text_threshold = -1,
+    pet_tp_text_threshold = -1,
     target_frame_width = -1,
+    target_height = -1,
     target_row_height = -1,
     target_row_gap = -1,
     target_opacity = -1,
+    target_show_mp = false,
+    target_show_tp = false,
+    target_mp_text_threshold = -1,
+    target_tp_text_threshold = -1,
     buff_reminders = {
         default = {
             enabled = true,
@@ -253,7 +275,7 @@ local TOWN_ZONE_IDS = {
 
 local LIMITS = {
     width_min = 170,
-    width_max = 360,
+    width_max = 750,
     row_height_min = 32,
     target_row_height_with_debuffs_min = 92,
     party_row_height_with_buffs_min = 92,
@@ -262,6 +284,10 @@ local LIMITS = {
     row_gap_max = 14,
     max_buffs_min = 1,
     max_buffs_max = 16,
+    mp_text_threshold_min = 0,
+    mp_text_threshold_max = 100,
+    tp_text_threshold_min = 0,
+    tp_text_threshold_max = 3000,
     opacity_min = 35,
     opacity_max = 100,
 };
@@ -366,32 +392,105 @@ function normalize_frame_opacity(value, fallback)
     return clamp_int(value, LIMITS.opacity_min, LIMITS.opacity_max);
 end
 
+function normalize_frame_bar_enabled(value, fallback)
+    if (value == nil or value == 'default') then
+        return fallback == true;
+    end
+
+    return value ~= false;
+end
+
+function normalize_mp_text_threshold(value, fallback)
+    value = tonumber(value);
+    if (value == nil or value < 0) then
+        value = fallback;
+    end
+
+    return clamp_int(value, LIMITS.mp_text_threshold_min, LIMITS.mp_text_threshold_max);
+end
+
+function normalize_tp_text_threshold(value, fallback)
+    value = tonumber(value);
+    if (value == nil or value < 0) then
+        value = fallback;
+    end
+
+    return clamp_int(value, LIMITS.tp_text_threshold_min, LIMITS.tp_text_threshold_max);
+end
+
+function apply_frame_bar_options(layout, kind)
+    layout.kind = kind;
+    layout.show_mp = state.settings[('%s_show_mp'):fmt(kind)] == true;
+    layout.show_tp = state.settings[('%s_show_tp'):fmt(kind)] == true;
+    layout.mp_text_threshold = state.settings[('%s_mp_text_threshold'):fmt(kind)] or state.settings.mp_text_threshold;
+    layout.tp_text_threshold = state.settings[('%s_tp_text_threshold'):fmt(kind)] or state.settings.tp_text_threshold;
+
+    return layout;
+end
+
 function frame_layout(kind)
     local settings = state.settings;
-    return {
+    return apply_frame_bar_options({
         width = settings[('%s_frame_width'):fmt(kind)] or settings.frame_width,
-        row_height = settings[('%s_row_height'):fmt(kind)] or settings.row_height,
+        row_height = settings[('%s_height'):fmt(kind)] or settings[('%s_row_height'):fmt(kind)] or settings.height or settings.row_height,
         row_gap = settings[('%s_row_gap'):fmt(kind)] or settings.row_gap,
         opacity = settings[('%s_opacity'):fmt(kind)] or settings.opacity,
-    };
+    }, kind);
 end
 
 function party_size(value)
     return clamp_int(value, 1, 6);
 end
 
+function party_display_count_for_size(size)
+    return math.max(party_size(size) - 1, 0);
+end
+
+function normalize_party_grid_columns(value, size)
+    local max_columns = math.max(party_display_count_for_size(size), 1);
+    return clamp_int(value, 1, max_columns);
+end
+
+function normalize_party_grid_rows(value, size)
+    local max_rows = math.max(party_display_count_for_size(size), 1);
+    return clamp_int(value, 1, max_rows);
+end
+
+function fit_party_grid(layout, size, preserve)
+    layout.columns = normalize_party_grid_columns(layout.columns, size);
+    layout.rows = normalize_party_grid_rows(layout.rows, size);
+
+    local display_count = party_display_count_for_size(size);
+    if (display_count <= 0 or (layout.columns * layout.rows) >= display_count) then
+        return layout;
+    end
+
+    if (preserve == 'rows') then
+        layout.columns = normalize_party_grid_columns(math.ceil(display_count / layout.rows), size);
+    else
+        layout.rows = normalize_party_grid_rows(math.ceil(display_count / layout.columns), size);
+    end
+
+    return layout;
+end
+
 function normalize_party_size_layout(layout, size, settings)
     layout = type(layout) == 'table' and layout or { };
+    local preserve = (layout.rows ~= nil and layout.columns == nil) and 'rows' or 'columns';
 
-    return {
+    local result = {
         x = clamp_int(layout.x or layout.window_x or settings.party_window_x, -2000, 4000),
         y = clamp_int(layout.y or layout.window_y or settings.party_window_y, -2000, 4000),
         width = normalize_frame_width(layout.frame_width or layout.width, settings.party_frame_width),
         row_height = normalize_frame_row_height(layout.row_height, settings.party_row_height),
         row_gap = normalize_frame_row_gap(layout.row_gap, settings.party_row_gap),
         opacity = normalize_frame_opacity(layout.opacity, settings.party_opacity),
+        columns = normalize_party_grid_columns(layout.columns, size),
+        rows = normalize_party_grid_rows(layout.rows, size),
         size = party_size(size),
     };
+
+    return fit_party_grid(result, size, preserve);
 end
 
 function normalize_party_size_layouts(layouts, settings)
@@ -414,7 +513,7 @@ function party_layout_for_size(size)
         state.settings.party_size_layouts[size] = normalize_party_size_layout(nil, size, state.settings);
     end
 
-    return state.settings.party_size_layouts[size];
+    return apply_frame_bar_options(state.settings.party_size_layouts[size], 'party');
 end
 
 function party_size_from_units(units)
@@ -763,6 +862,7 @@ local function normalize_settings(settings)
     settings.same_zone_dim = settings.same_zone_dim ~= false;
     settings.show_jobs = settings.show_jobs ~= false;
     settings.show_percent = settings.show_percent ~= false;
+    settings.show_mp = settings.show_mp ~= false;
     settings.show_tp = settings.show_tp ~= false;
     settings.show_buffs = settings.show_buffs ~= false;
     settings.show_buff_reminders = settings.show_buff_reminders ~= false;
@@ -779,28 +879,51 @@ local function normalize_settings(settings)
     settings.target_window_x = clamp_int(settings.target_window_x, -2000, 4000);
     settings.target_window_y = clamp_int(settings.target_window_y, -2000, 4000);
     settings.frame_width = clamp_int(settings.frame_width, LIMITS.width_min, LIMITS.width_max);
-    settings.row_height = clamp_int(settings.row_height, LIMITS.row_height_min, LIMITS.row_height_max);
+    settings.row_height = normalize_frame_row_height(settings.height or settings.row_height, settings.row_height);
+    settings.height = settings.row_height;
     settings.row_gap = clamp_int(settings.row_gap, LIMITS.row_gap_min, LIMITS.row_gap_max);
     settings.max_buffs = clamp_int(settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
     settings.party_preview_size = party_size(settings.party_preview_size);
+    settings.mp_text_threshold = normalize_mp_text_threshold(settings.mp_text_threshold, 1);
+    settings.tp_text_threshold = normalize_tp_text_threshold(settings.tp_text_threshold, 1000);
     settings.opacity = clamp_int(settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max);
     settings.self_frame_width = normalize_frame_width(settings.self_frame_width, settings.frame_width);
-    settings.self_row_height = normalize_frame_row_height(settings.self_row_height, settings.row_height);
+    settings.self_row_height = normalize_frame_row_height(settings.self_height or settings.self_row_height, settings.row_height);
+    settings.self_height = settings.self_row_height;
     settings.self_row_gap = normalize_frame_row_gap(settings.self_row_gap, settings.row_gap);
     settings.self_opacity = normalize_frame_opacity(settings.self_opacity, settings.opacity);
+    settings.self_show_mp = normalize_frame_bar_enabled(settings.self_show_mp, settings.show_mp);
+    settings.self_show_tp = normalize_frame_bar_enabled(settings.self_show_tp, settings.show_tp);
+    settings.self_mp_text_threshold = normalize_mp_text_threshold(settings.self_mp_text_threshold, settings.mp_text_threshold);
+    settings.self_tp_text_threshold = normalize_tp_text_threshold(settings.self_tp_text_threshold, settings.tp_text_threshold);
     settings.party_frame_width = normalize_frame_width(settings.party_frame_width, settings.frame_width);
-    settings.party_row_height = normalize_frame_row_height(settings.party_row_height, settings.row_height);
+    settings.party_row_height = normalize_frame_row_height(settings.party_height or settings.party_row_height, settings.row_height);
+    settings.party_height = settings.party_row_height;
     settings.party_row_gap = normalize_frame_row_gap(settings.party_row_gap, settings.row_gap);
     settings.party_opacity = normalize_frame_opacity(settings.party_opacity, settings.opacity);
+    settings.party_show_mp = normalize_frame_bar_enabled(settings.party_show_mp, settings.show_mp);
+    settings.party_show_tp = normalize_frame_bar_enabled(settings.party_show_tp, settings.show_tp);
+    settings.party_mp_text_threshold = normalize_mp_text_threshold(settings.party_mp_text_threshold, settings.mp_text_threshold);
+    settings.party_tp_text_threshold = normalize_tp_text_threshold(settings.party_tp_text_threshold, settings.tp_text_threshold);
     settings.party_size_layouts = normalize_party_size_layouts(settings.party_size_layouts, settings);
     settings.pet_frame_width = normalize_frame_width(settings.pet_frame_width, settings.frame_width);
-    settings.pet_row_height = normalize_frame_row_height(settings.pet_row_height, settings.row_height);
+    settings.pet_row_height = normalize_frame_row_height(settings.pet_height or settings.pet_row_height, settings.row_height);
+    settings.pet_height = settings.pet_row_height;
     settings.pet_row_gap = normalize_frame_row_gap(settings.pet_row_gap, settings.row_gap);
     settings.pet_opacity = normalize_frame_opacity(settings.pet_opacity, settings.opacity);
+    settings.pet_show_mp = normalize_frame_bar_enabled(settings.pet_show_mp, settings.show_mp);
+    settings.pet_show_tp = normalize_frame_bar_enabled(settings.pet_show_tp, settings.show_tp);
+    settings.pet_mp_text_threshold = normalize_mp_text_threshold(settings.pet_mp_text_threshold, settings.mp_text_threshold);
+    settings.pet_tp_text_threshold = normalize_tp_text_threshold(settings.pet_tp_text_threshold, settings.tp_text_threshold);
     settings.target_frame_width = normalize_frame_width(settings.target_frame_width, settings.frame_width);
-    settings.target_row_height = normalize_frame_row_height(settings.target_row_height, settings.row_height);
+    settings.target_row_height = normalize_frame_row_height(settings.target_height or settings.target_row_height, settings.row_height);
+    settings.target_height = settings.target_row_height;
     settings.target_row_gap = normalize_frame_row_gap(settings.target_row_gap, settings.row_gap);
     settings.target_opacity = normalize_frame_opacity(settings.target_opacity, settings.opacity);
+    settings.target_show_mp = normalize_frame_bar_enabled(settings.target_show_mp, false);
+    settings.target_show_tp = normalize_frame_bar_enabled(settings.target_show_tp, false);
+    settings.target_mp_text_threshold = normalize_mp_text_threshold(settings.target_mp_text_threshold, settings.mp_text_threshold);
+    settings.target_tp_text_threshold = normalize_tp_text_threshold(settings.target_tp_text_threshold, settings.tp_text_threshold);
     settings.buff_reminders = normalize_buff_reminders(settings.buff_reminders);
     settings.target_debuff_reminders = normalize_target_debuff_reminders(settings.target_debuff_reminders);
     settings.buff_reminder_suppressed_zone_ids = normalize_zone_id_list(settings.buff_reminder_suppressed_zone_ids);
@@ -862,6 +985,31 @@ local function display_percent(value)
     end
 
     return ('%d%%'):fmt(math.floor(numeric + 0.5));
+end
+
+function resource_current_value(value)
+    local numeric = tonumber(value);
+    if (numeric == nil or numeric < 0) then
+        return nil;
+    end
+
+    return math.floor(numeric + 0.5);
+end
+
+function estimate_resource_max(current, percent)
+    current = resource_current_value(current);
+    percent = percent_value(percent);
+
+    if (current == nil or percent == nil or percent <= 0) then
+        return nil;
+    end
+
+    local estimated = math.floor(((current * 100) / percent) + 0.5);
+    if (estimated < current) then
+        estimated = current;
+    end
+
+    return estimated;
 end
 
 local function entity_distance(entity, index)
@@ -2154,14 +2302,16 @@ end
 function append_party_size_layout_config(lines, size, layout)
     layout = normalize_party_size_layout(layout, size, state.settings);
 
-    table.insert(lines, ('            [%d] = { x = %d, y = %d, frame_width = %d, row_height = %d, row_gap = %d, opacity = %d },'):fmt(
+    table.insert(lines, ('            [%d] = { x = %d, y = %d, frame_width = %d, row_height = %d, row_gap = %d, opacity = %d, columns = %d, rows = %d },'):fmt(
         size,
         layout.x,
         layout.y,
         layout.width,
         layout.row_height,
         layout.row_gap,
-        layout.opacity));
+        layout.opacity,
+        layout.columns,
+        layout.rows));
 end
 
 local function capture_runtime_settings_for_save()
@@ -2201,6 +2351,7 @@ local function config_text_from_settings(settings)
         ('        same_zone_dim = %s,'):fmt(bool_text(settings.same_zone_dim)),
         ('        show_jobs = %s,'):fmt(bool_text(settings.show_jobs)),
         ('        show_percent = %s,'):fmt(bool_text(settings.show_percent)),
+        ('        show_mp = %s,'):fmt(bool_text(settings.show_mp)),
         ('        show_tp = %s,'):fmt(bool_text(settings.show_tp)),
         ('        show_buffs = %s,'):fmt(bool_text(settings.show_buffs)),
         ('        show_buff_reminders = %s,'):fmt(bool_text(settings.show_buff_reminders)),
@@ -2210,6 +2361,8 @@ local function config_text_from_settings(settings)
         ('        buff_reminder_suppressed_zone_ids = %s,'):fmt(zone_id_list_text(settings.buff_reminder_suppressed_zone_ids)),
         ('        max_buffs = %d,'):fmt(settings.max_buffs),
         ('        party_preview_size = %d,'):fmt(settings.party_preview_size),
+        ('        mp_text_threshold = %d,'):fmt(settings.mp_text_threshold),
+        ('        tp_text_threshold = %d,'):fmt(settings.tp_text_threshold),
         '',
         ('        self_window_x = %d,'):fmt(state.self_window_x),
         ('        self_window_y = %d,'):fmt(state.self_window_y),
@@ -2221,18 +2374,29 @@ local function config_text_from_settings(settings)
         ('        target_window_y = %d,'):fmt(state.target_window_y),
         '',
         ('        frame_width = %d,'):fmt(settings.frame_width),
+        ('        height = %d,'):fmt(settings.height),
         ('        row_height = %d,'):fmt(settings.row_height),
         ('        row_gap = %d,'):fmt(settings.row_gap),
         ('        opacity = %d,'):fmt(settings.opacity),
         '',
         ('        self_frame_width = %d,'):fmt(settings.self_frame_width),
+        ('        self_height = %d,'):fmt(settings.self_height),
         ('        self_row_height = %d,'):fmt(settings.self_row_height),
         ('        self_row_gap = %d,'):fmt(settings.self_row_gap),
         ('        self_opacity = %d,'):fmt(settings.self_opacity),
+        ('        self_show_mp = %s,'):fmt(bool_text(settings.self_show_mp)),
+        ('        self_show_tp = %s,'):fmt(bool_text(settings.self_show_tp)),
+        ('        self_mp_text_threshold = %d,'):fmt(settings.self_mp_text_threshold),
+        ('        self_tp_text_threshold = %d,'):fmt(settings.self_tp_text_threshold),
         ('        party_frame_width = %d,'):fmt(settings.party_frame_width),
+        ('        party_height = %d,'):fmt(settings.party_height),
         ('        party_row_height = %d,'):fmt(settings.party_row_height),
         ('        party_row_gap = %d,'):fmt(settings.party_row_gap),
         ('        party_opacity = %d,'):fmt(settings.party_opacity),
+        ('        party_show_mp = %s,'):fmt(bool_text(settings.party_show_mp)),
+        ('        party_show_tp = %s,'):fmt(bool_text(settings.party_show_tp)),
+        ('        party_mp_text_threshold = %d,'):fmt(settings.party_mp_text_threshold),
+        ('        party_tp_text_threshold = %d,'):fmt(settings.party_tp_text_threshold),
         '        party_size_layouts = {',
     };
 
@@ -2245,13 +2409,23 @@ local function config_text_from_settings(settings)
 
     local tail_lines = {
         ('        pet_frame_width = %d,'):fmt(settings.pet_frame_width),
+        ('        pet_height = %d,'):fmt(settings.pet_height),
         ('        pet_row_height = %d,'):fmt(settings.pet_row_height),
         ('        pet_row_gap = %d,'):fmt(settings.pet_row_gap),
         ('        pet_opacity = %d,'):fmt(settings.pet_opacity),
+        ('        pet_show_mp = %s,'):fmt(bool_text(settings.pet_show_mp)),
+        ('        pet_show_tp = %s,'):fmt(bool_text(settings.pet_show_tp)),
+        ('        pet_mp_text_threshold = %d,'):fmt(settings.pet_mp_text_threshold),
+        ('        pet_tp_text_threshold = %d,'):fmt(settings.pet_tp_text_threshold),
         ('        target_frame_width = %d,'):fmt(settings.target_frame_width),
+        ('        target_height = %d,'):fmt(settings.target_height),
         ('        target_row_height = %d,'):fmt(settings.target_row_height),
         ('        target_row_gap = %d,'):fmt(settings.target_row_gap),
         ('        target_opacity = %d,'):fmt(settings.target_opacity),
+        ('        target_show_mp = %s,'):fmt(bool_text(settings.target_show_mp)),
+        ('        target_show_tp = %s,'):fmt(bool_text(settings.target_show_tp)),
+        ('        target_mp_text_threshold = %d,'):fmt(settings.target_mp_text_threshold),
+        ('        target_tp_text_threshold = %d,'):fmt(settings.target_tp_text_threshold),
         '',
         '        buff_reminders = {',
     };
@@ -2316,6 +2490,14 @@ local function party_member_unit(party, index, self_zone, reminder_job, reminder
         return nil;
     end
 
+    local hp_pct = safe_read(function () return party:GetMemberHPPercent(index); end, nil);
+    local mp_pct = safe_read(function () return party:GetMemberMPPercent(index); end, nil);
+    local hp = resource_current_value(safe_read(function () return party:GetMemberHP(index); end, nil));
+    local mp = resource_current_value(safe_read(function () return party:GetMemberMP(index); end, nil));
+    local player = index == 0 and safe_read(function () return AshitaCore:GetMemoryManager():GetPlayer(); end, nil) or nil;
+    local hp_max = player ~= nil and resource_current_value(safe_read(function () return player:GetHPMax(); end, nil)) or estimate_resource_max(hp, hp_pct);
+    local mp_max = player ~= nil and resource_current_value(safe_read(function () return player:GetMPMax(); end, nil)) or estimate_resource_max(mp, mp_pct);
+
     return {
         kind = 'party',
         tag = tag,
@@ -2324,8 +2506,12 @@ local function party_member_unit(party, index, self_zone, reminder_job, reminder
         category = category,
         reminder_job = reminder_job,
         reminders_suppressed = reminders_suppressed == true,
-        hp_pct = safe_read(function () return party:GetMemberHPPercent(index); end, nil),
-        mp_pct = safe_read(function () return party:GetMemberMPPercent(index); end, nil),
+        hp = hp,
+        hp_max = hp_max,
+        hp_pct = hp_pct,
+        mp = mp,
+        mp_max = mp_max,
+        mp_pct = mp_pct,
         tp = safe_read(function () return party:GetMemberTP(index); end, nil),
         job = job_label(
             safe_read(function () return party:GetMemberMainJob(index); end, nil),
@@ -2396,7 +2582,11 @@ function party_preview_unit(index)
         category = 'player',
         reminder_job = current_player_job_key(),
         reminders_suppressed = true,
+        hp = math.max(320, 920 - (index * 82)),
+        hp_max = 920,
         hp_pct = math.max(48, 100 - (index * 7)),
+        mp = math.max(48, 280 - (index * 24)),
+        mp_max = 280,
         mp_pct = math.max(34, 92 - (index * 8)),
         tp = index * 230,
         job = ({ 'WAR30/MNK15', 'WHM30/BLM15', 'SAM30/WAR15', 'BRD30/WHM15', 'RDM30/WHM15' })[index] or '',
@@ -2573,7 +2763,7 @@ local function draw_text(draw_list, x, y, color, text)
     draw_list:AddText({ x, y }, color_u32(color), text);
 end
 
-local function draw_bar(draw_list, x, y, width, height, percent, fill_color, alpha)
+function draw_bar_fill(draw_list, x, y, width, height, percent, fill_color, alpha, rounding)
     percent = percent_value(percent);
     local fill_width = 0;
 
@@ -2581,16 +2771,95 @@ local function draw_bar(draw_list, x, y, width, height, percent, fill_color, alp
         fill_width = math.floor(width * (percent / 100));
     end
 
-    draw_list:AddRectFilled({ x, y }, { x + width, y + height }, color_u32(apply_alpha(COLORS.bar_empty, alpha)), 2.0);
     if (fill_width > 0) then
-        draw_list:AddRectFilled({ x, y }, { x + fill_width, y + height }, color_u32(apply_alpha(fill_color, alpha)), 2.0);
+        draw_list:AddRectFilled({ x, y }, { x + fill_width, y + height }, color_u32(apply_alpha(fill_color, alpha)), rounding or 2.0);
     end
 end
 
+local function draw_bar(draw_list, x, y, width, height, percent, fill_color, alpha)
+    draw_list:AddRectFilled({ x, y }, { x + width, y + height }, color_u32(apply_alpha(COLORS.bar_empty, alpha)), 2.0);
+    draw_bar_fill(draw_list, x, y, width, height, percent, fill_color, alpha, 2.0);
+end
+
+function tp_percent_value(tp)
+    local numeric = tonumber(tp);
+    if (numeric == nil) then
+        return nil;
+    end
+
+    return clamp(numeric / 30, 0, 100);
+end
+
 local function draw_tp_line(draw_list, x, y, width, tp, alpha)
-    local numeric = tonumber(tp) or 0;
-    local percent = clamp(numeric / 30, 0, 100);
+    local percent = tp_percent_value(tp) or 0;
     draw_bar(draw_list, x, y, width, 3, percent, COLORS.tp, alpha);
+end
+
+function resource_pair_text(current, max)
+    current = resource_current_value(current);
+    max = resource_current_value(max);
+
+    if (current == nil or max == nil or max <= 0) then
+        return nil;
+    end
+
+    return ('%d/%d'):fmt(current, max);
+end
+
+function hp_status_text(unit)
+    local percent_text = display_percent(unit.hp_pct);
+    local pair = resource_pair_text(unit.hp, unit.hp_max);
+
+    if (pair ~= nil) then
+        return ('%s %s'):fmt(percent_text, pair);
+    end
+
+    return percent_text;
+end
+
+function unit_has_mp(unit)
+    local percent = percent_value(unit.mp_pct);
+    if (percent == nil) then
+        return false;
+    end
+
+    local max = resource_current_value(unit.mp_max);
+    return percent > 0 or (max ~= nil and max > 0);
+end
+
+function unit_has_tp(unit)
+    return tonumber(unit.tp) ~= nil;
+end
+
+function mp_status_text(unit, layout)
+    if (layout.show_mp ~= true or not unit_has_mp(unit)) then
+        return nil;
+    end
+
+    local percent = percent_value(unit.mp_pct);
+    if (percent == nil or percent < layout.mp_text_threshold) then
+        return nil;
+    end
+
+    local pair = resource_pair_text(unit.mp, unit.mp_max);
+    if (pair ~= nil) then
+        return ('MP %s'):fmt(pair);
+    end
+
+    return ('MP %s'):fmt(display_percent(unit.mp_pct));
+end
+
+function tp_status_text(unit, layout)
+    if (layout.show_tp ~= true or not unit_has_tp(unit)) then
+        return nil;
+    end
+
+    local numeric = tonumber(unit.tp) or 0;
+    if (numeric < layout.tp_text_threshold) then
+        return nil;
+    end
+
+    return ('%dTP'):fmt(numeric);
 end
 
 local function unit_right_label(unit)
@@ -2607,17 +2876,11 @@ local function unit_right_label(unit)
         if (unit.distance ~= nil) then
             table.insert(pieces, ('%.1f'):fmt(unit.distance));
         end
-        if (state.settings.show_tp and tonumber(unit.tp) ~= nil) then
-            table.insert(pieces, ('%dTP'):fmt(unit.tp));
-        end
 
         return table.concat(pieces, ' ');
     end
 
     local pieces = { };
-    if (state.settings.show_tp and tonumber(unit.tp) ~= nil) then
-        table.insert(pieces, ('%dTP'):fmt(unit.tp));
-    end
     if (state.settings.show_jobs and unit.job ~= nil and #unit.job > 0) then
         table.insert(pieces, unit.job);
     end
@@ -2728,10 +2991,55 @@ local function draw_target_debuff_icon_row(unit, x, y, width, alpha)
     imgui.SetCursorScreenPos({ x, y });
 end
 
-local function draw_unit_row(unit, layout, row_height)
+function draw_resource_labels(draw_list, unit, layout, x, y, width, alpha)
+    local hp_x = x + width;
+    if (state.settings.show_percent == true) then
+        local hp_text = hp_status_text(unit);
+        local hp_width = calc_text_width(hp_text);
+        hp_x = x + width - hp_width;
+        draw_text(draw_list, hp_x, y, COLORS.text, hp_text);
+    end
+
+    local label_x = x;
+    local max_label_x = hp_x - 8;
+    local mp_text = mp_status_text(unit, layout);
+    if (mp_text ~= nil) then
+        local mp_width = calc_text_width(mp_text);
+        if ((label_x + mp_width) < max_label_x) then
+            draw_text(draw_list, label_x, y, COLORS.mp, mp_text);
+            label_x = label_x + mp_width + 8;
+        end
+    end
+
+    local tp_text = tp_status_text(unit, layout);
+    if (tp_text ~= nil) then
+        local tp_width = calc_text_width(tp_text);
+        if ((label_x + tp_width) < max_label_x) then
+            draw_text(draw_list, label_x, y, COLORS.tp, tp_text);
+        end
+    end
+end
+
+function draw_resource_bars(draw_list, unit, layout, x, y, width, height, hp_color, alpha)
+    draw_bar(draw_list, x, y, width, height, unit.hp_pct, hp_color, alpha);
+
+    local bottom_y = y + height;
+    if (layout.show_tp == true and unit_has_tp(unit)) then
+        local tp_h = 3;
+        bottom_y = bottom_y - tp_h;
+        draw_bar_fill(draw_list, x, bottom_y, width, tp_h, tp_percent_value(unit.tp), COLORS.tp, alpha, 1.0);
+    end
+
+    if (layout.show_mp == true and unit_has_mp(unit)) then
+        local mp_h = 4;
+        bottom_y = bottom_y - mp_h;
+        draw_bar_fill(draw_list, x, bottom_y, width, mp_h, unit.mp_pct, COLORS.mp, alpha, 1.0);
+    end
+end
+
+local function draw_unit_row(unit, layout, row_height, skip_spacing)
     local x, y = imgui.GetCursorScreenPos();
     local draw_list = imgui.GetWindowDrawList();
-    local settings = state.settings;
     local width = layout.width;
     local alpha = (layout.opacity / 100) * (unit.dim and 0.62 or 1.0);
     local row_bg = unit.dim and COLORS.row_dim or COLORS.row_bg;
@@ -2740,8 +3048,9 @@ local function draw_unit_row(unit, layout, row_height)
     local hp_color = hp ~= nil and hp <= 35 and COLORS.hp_low or COLORS.hp;
     local bar_x = x + 8;
     local bar_w = width - 16;
-    local hp_y = y + row_height - 16;
-    local mp_y = y + row_height - 8;
+    local bar_h = 14;
+    local bar_y = y + row_height - bar_h - 6;
+    local label_y = math.max(y + 22, bar_y - 14);
     local name_max_width = width - 84;
     local name = fit_text(unit.name, name_max_width);
     local right = unit_right_label(unit);
@@ -2761,22 +3070,12 @@ local function draw_unit_row(unit, layout, row_height)
     draw_buff_icon_row(unit, x, y, width, alpha);
     draw_target_debuff_icon_row(unit, x, y, width, alpha);
 
-    draw_bar(draw_list, bar_x, hp_y, bar_w, 6, unit.hp_pct, hp_color, alpha);
+    draw_resource_bars(draw_list, unit, layout, bar_x, bar_y, bar_w, bar_h, hp_color, alpha);
+    draw_resource_labels(draw_list, unit, layout, bar_x, label_y, bar_w, alpha);
 
-    if (unit.kind == 'party' or unit.kind == 'pet') then
-        draw_bar(draw_list, bar_x, mp_y, bar_w, 4, unit.mp_pct, COLORS.mp, alpha);
-        if (settings.show_tp) then
-            draw_tp_line(draw_list, bar_x, y + row_height - 3, bar_w, unit.tp, alpha);
-        end
+    if (skip_spacing ~= true) then
+        imgui.Dummy({ width, row_height + layout.row_gap });
     end
-
-    if (settings.show_percent) then
-        local hp_text = display_percent(unit.hp_pct);
-        local hp_text_width = calc_text_width(hp_text);
-        draw_text(draw_list, x + width - hp_text_width - 8, hp_y - 13, COLORS.text, hp_text);
-    end
-
-    imgui.Dummy({ width, row_height + layout.row_gap });
 end
 
 local function effective_row_height(unit, layout)
@@ -2814,6 +3113,65 @@ local function render_window(title, open_state, x, y, layout, units, position_ca
         for _, unit in ipairs(units) do
             draw_unit_row(unit, layout, effective_row_height(unit, layout));
         end
+    end
+
+    imgui.End();
+    imgui.PopStyleColor(2);
+    imgui.PopStyleVar(2);
+end
+
+local function party_grid_size(layout, unit_count)
+    unit_count = math.max(tonumber(unit_count) or 0, 1);
+    local columns = clamp_int(layout.columns, 1, unit_count);
+    local rows = clamp_int(layout.rows, 1, unit_count);
+
+    if ((columns * rows) < unit_count) then
+        rows = math.ceil(unit_count / columns);
+    end
+
+    return columns, rows;
+end
+
+local function render_party_grid_window(title, open_state, x, y, layout, units, position_callback)
+    local settings = state.settings;
+    if (#units == 0) then
+        return;
+    end
+
+    local locked = settings.locked == true;
+    local window_flags = locked and WINDOW_FLAGS_LOCKED or WINDOW_FLAGS_BASE;
+    local pad = locked and 4 or 8;
+    local alpha = layout.opacity / 100;
+    local columns, rows = party_grid_size(layout, #units);
+    local row_height = layout.row_height;
+    for _, unit in ipairs(units) do
+        row_height = math.max(row_height, effective_row_height(unit, layout));
+    end
+
+    local gap = layout.row_gap;
+    local total_width = (columns * layout.width) + ((columns - 1) * gap);
+    local total_height = (rows * row_height) + ((rows - 1) * gap);
+
+    imgui.SetNextWindowPos({ x, y }, locked and ImGuiCond_Always or ImGuiCond_FirstUseEver);
+    imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { pad, pad });
+    imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, locked and 0.0 or 1.0);
+    imgui.PushStyleColor(ImGuiCol_WindowBg, apply_alpha(COLORS.panel_bg, alpha));
+    imgui.PushStyleColor(ImGuiCol_Border, apply_alpha(COLORS.panel_border, alpha));
+
+    if (imgui.Begin(title, open_state, window_flags)) then
+        local current_x, current_y = imgui.GetWindowPos();
+        position_callback(current_x, current_y);
+
+        local start_x, start_y = imgui.GetCursorScreenPos();
+        for index, unit in ipairs(units) do
+            local column = (index - 1) % columns;
+            local row = math.floor((index - 1) / columns);
+            imgui.SetCursorScreenPos({ start_x + (column * (layout.width + gap)), start_y + (row * (row_height + gap)) });
+            draw_unit_row(unit, layout, row_height, true);
+        end
+
+        imgui.SetCursorScreenPos({ start_x, start_y });
+        imgui.Dummy({ total_width, total_height });
     end
 
     imgui.End();
@@ -2880,7 +3238,7 @@ local function render_party()
     end
 
     local layout = party_layout_for_size(size);
-    render_window(
+    render_party_grid_window(
         ('AshitaFrames Party %d###AshitaFramesParty'):fmt(size),
         state.visible,
         layout.x,
@@ -2934,6 +3292,7 @@ end
 
 function render_frame_layout_controls(kind, label)
     local width_field = ('%s_frame_width'):fmt(kind);
+    local height_field = ('%s_height'):fmt(kind);
     local row_height_field = ('%s_row_height'):fmt(kind);
     local row_gap_field = ('%s_row_gap'):fmt(kind);
     local opacity_field = ('%s_opacity'):fmt(kind);
@@ -2943,8 +3302,10 @@ function render_frame_layout_controls(kind, label)
         state.settings[width_field] = normalize_frame_width(value, state.settings.frame_width);
         mark_config_changed();
     end);
-    render_int_control('Base Row Height', ('%s_row_height'):fmt(kind), state.settings[row_height_field], LIMITS.row_height_min, LIMITS.row_height_max, function (value)
-        state.settings[row_height_field] = normalize_frame_row_height(value, state.settings.row_height);
+    render_int_control('Height', ('%s_height'):fmt(kind), state.settings[height_field], LIMITS.row_height_min, LIMITS.row_height_max, function (value)
+        local normalized = normalize_frame_row_height(value, state.settings.row_height);
+        state.settings[height_field] = normalized;
+        state.settings[row_height_field] = normalized;
         mark_config_changed();
     end);
     render_int_control('Row Gap', ('%s_row_gap'):fmt(kind), state.settings[row_gap_field], LIMITS.row_gap_min, LIMITS.row_gap_max, function (value)
@@ -2955,6 +3316,35 @@ function render_frame_layout_controls(kind, label)
         state.settings[opacity_field] = normalize_frame_opacity(value, state.settings.opacity);
         mark_config_changed();
     end, '%');
+end
+
+function render_frame_bar_controls(kind, label)
+    local show_mp_field = ('%s_show_mp'):fmt(kind);
+    local show_tp_field = ('%s_show_tp'):fmt(kind);
+    local mp_threshold_field = ('%s_mp_text_threshold'):fmt(kind);
+    local tp_threshold_field = ('%s_tp_text_threshold'):fmt(kind);
+
+    imgui.TextColored(COLORS.accent, label);
+
+    local show_mp = state.settings[show_mp_field] == true;
+    if (imgui.Checkbox(('Show MP Bar##ashitaframes_%s_show_mp'):fmt(kind), { show_mp })) then
+        state.settings[show_mp_field] = not show_mp;
+        mark_config_changed();
+    end
+    render_int_control('MP Text At', ('%s_mp_text_threshold'):fmt(kind), state.settings[mp_threshold_field], LIMITS.mp_text_threshold_min, LIMITS.mp_text_threshold_max, function (value)
+        state.settings[mp_threshold_field] = normalize_mp_text_threshold(value, state.settings.mp_text_threshold);
+        mark_config_changed();
+    end, '%');
+
+    local show_tp = state.settings[show_tp_field] == true;
+    if (imgui.Checkbox(('Show TP Bar##ashitaframes_%s_show_tp'):fmt(kind), { show_tp })) then
+        state.settings[show_tp_field] = not show_tp;
+        mark_config_changed();
+    end
+    render_int_control('TP Text At', ('%s_tp_text_threshold'):fmt(kind), state.settings[tp_threshold_field], LIMITS.tp_text_threshold_min, LIMITS.tp_text_threshold_max, function (value)
+        state.settings[tp_threshold_field] = normalize_tp_text_threshold(value, state.settings.tp_text_threshold);
+        mark_config_changed();
+    end, 'TP');
 end
 
 function render_party_size_layout_controls()
@@ -2970,7 +3360,7 @@ function render_party_size_layout_controls()
         layout.width = normalize_frame_width(value, state.settings.party_frame_width);
         mark_config_changed();
     end);
-    render_int_control('Base Row Height', ('party_%d_row_height'):fmt(size), layout.row_height, LIMITS.row_height_min, LIMITS.row_height_max, function (value)
+    render_int_control('Height', ('party_%d_row_height'):fmt(size), layout.row_height, LIMITS.row_height_min, LIMITS.row_height_max, function (value)
         layout.row_height = normalize_frame_row_height(value, state.settings.party_row_height);
         mark_config_changed();
     end);
@@ -2982,6 +3372,18 @@ function render_party_size_layout_controls()
         layout.opacity = normalize_frame_opacity(value, state.settings.party_opacity);
         mark_config_changed();
     end, '%');
+
+    local max_members = math.max(party_display_count_for_size(size), 1);
+    render_int_control('Columns', ('party_%d_columns'):fmt(size), layout.columns, 1, max_members, function (value)
+        layout.columns = normalize_party_grid_columns(value, size);
+        fit_party_grid(layout, size, 'columns');
+        mark_config_changed();
+    end, 'cols');
+    render_int_control('Rows', ('party_%d_rows'):fmt(size), layout.rows, 1, max_members, function (value)
+        layout.rows = normalize_party_grid_rows(value, size);
+        fit_party_grid(layout, size, 'rows');
+        mark_config_changed();
+    end, 'rows');
 end
 
 function render_general_config_tab()
@@ -3015,6 +3417,8 @@ function render_self_frame_config_tab()
 
     imgui.Separator();
     render_frame_layout_controls('self', 'Self Frame');
+    imgui.Separator();
+    render_frame_bar_controls('self', 'Self Bars');
 end
 
 function render_party_frame_config_tab()
@@ -3052,6 +3456,8 @@ function render_party_frame_config_tab()
     imgui.Separator();
     render_party_size_layout_controls();
     imgui.Separator();
+    render_frame_bar_controls('party', 'Party Bars');
+    imgui.Separator();
     render_buff_reminder_config();
 end
 
@@ -3064,6 +3470,8 @@ function render_pet_frame_config_tab()
 
     imgui.Separator();
     render_frame_layout_controls('pet', 'Pet Frame');
+    imgui.Separator();
+    render_frame_bar_controls('pet', 'Pet Bars');
 end
 
 function render_target_frame_config_tab()
@@ -3093,6 +3501,8 @@ function render_target_frame_config_tab()
 
     imgui.Separator();
     render_frame_layout_controls('target', 'Target Frame');
+    imgui.Separator();
+    render_frame_bar_controls('target', 'Target Bars');
     imgui.Separator();
     render_target_debuff_reminder_config();
 end
@@ -3386,7 +3796,7 @@ local function print_status()
     local status_party_size = party_size(state.settings.party_preview_size);
     local status_party_layout = party_layout_for_size(status_party_size);
 
-    log_info(('visible=%s locked=%s self=%s target=%s party=%s pet=%s alliance=%s buffs=%s reminders=%s targetDebuffs=%s targetDebuffReminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d self=(%d,%d %dx%d gap=%d op=%d) partySize=%d party=(%d,%d %dx%d gap=%d op=%d) pet=(%d,%d %dx%d gap=%d op=%d) target=(%d,%d %dx%d gap=%d op=%d)'):fmt(
+    log_info(('visible=%s locked=%s self=%s target=%s party=%s pet=%s alliance=%s buffs=%s reminders=%s targetDebuffs=%s targetDebuffReminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d self=(%d,%d %dx%d gap=%d op=%d) partySize=%d party=(%d,%d %dx%d gap=%d op=%d cols=%d rows=%d) pet=(%d,%d %dx%d gap=%d op=%d) target=(%d,%d %dx%d gap=%d op=%d)'):fmt(
         tostring(state.visible[1] == true),
         tostring(state.settings.locked == true),
         tostring(state.settings.show_self == true),
@@ -3417,6 +3827,8 @@ local function print_status()
         status_party_layout.row_height,
         status_party_layout.row_gap,
         status_party_layout.opacity,
+        status_party_layout.columns,
+        status_party_layout.rows,
         state.pet_window_x,
         state.pet_window_y,
         state.settings.pet_frame_width,
