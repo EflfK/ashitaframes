@@ -32,6 +32,18 @@ return {
         row_height = 56,
         row_gap = 5,
         opacity = 88,
+        party_frame_width = 232,
+        party_row_height = 56,
+        party_row_gap = 5,
+        party_opacity = 88,
+        pet_frame_width = 232,
+        pet_row_height = 56,
+        pet_row_gap = 5,
+        pet_opacity = 88,
+        target_frame_width = 232,
+        target_row_height = 56,
+        target_row_gap = 5,
+        target_opacity = 88,
 
         buff_reminders = {
             default = {

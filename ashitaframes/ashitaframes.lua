@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.19';
+addon.version   = '0.3.20';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -74,6 +74,18 @@ local DEFAULT_SETTINGS = {
     row_height = 56,
     row_gap = 5,
     opacity = 88,
+    party_frame_width = -1,
+    party_row_height = -1,
+    party_row_gap = -1,
+    party_opacity = -1,
+    pet_frame_width = -1,
+    pet_row_height = -1,
+    pet_row_gap = -1,
+    pet_opacity = -1,
+    target_frame_width = -1,
+    target_row_height = -1,
+    target_row_gap = -1,
+    target_opacity = -1,
     buff_reminders = {
         default = {
             enabled = true,
@@ -305,6 +317,52 @@ end
 
 local function clamp_int(value, min_value, max_value)
     return math.floor(clamp(value, min_value, max_value) + 0.5);
+end
+
+function normalize_frame_width(value, fallback)
+    value = tonumber(value);
+    if (value == nil or value <= 0) then
+        value = fallback;
+    end
+
+    return clamp_int(value, LIMITS.width_min, LIMITS.width_max);
+end
+
+function normalize_frame_row_height(value, fallback)
+    value = tonumber(value);
+    if (value == nil or value <= 0) then
+        value = fallback;
+    end
+
+    return clamp_int(value, LIMITS.row_height_min, LIMITS.row_height_max);
+end
+
+function normalize_frame_row_gap(value, fallback)
+    value = tonumber(value);
+    if (value == nil or value < 0) then
+        value = fallback;
+    end
+
+    return clamp_int(value, LIMITS.row_gap_min, LIMITS.row_gap_max);
+end
+
+function normalize_frame_opacity(value, fallback)
+    value = tonumber(value);
+    if (value == nil or value <= 0) then
+        value = fallback;
+    end
+
+    return clamp_int(value, LIMITS.opacity_min, LIMITS.opacity_max);
+end
+
+function frame_layout(kind)
+    local settings = state.settings;
+    return {
+        width = settings[('%s_frame_width'):fmt(kind)] or settings.frame_width,
+        row_height = settings[('%s_row_height'):fmt(kind)] or settings.row_height,
+        row_gap = settings[('%s_row_gap'):fmt(kind)] or settings.row_gap,
+        opacity = settings[('%s_opacity'):fmt(kind)] or settings.opacity,
+    };
 end
 
 local function apply_alpha(color, alpha)
@@ -654,6 +712,18 @@ local function normalize_settings(settings)
     settings.row_gap = clamp_int(settings.row_gap, LIMITS.row_gap_min, LIMITS.row_gap_max);
     settings.max_buffs = clamp_int(settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
     settings.opacity = clamp_int(settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max);
+    settings.party_frame_width = normalize_frame_width(settings.party_frame_width, settings.frame_width);
+    settings.party_row_height = normalize_frame_row_height(settings.party_row_height, settings.row_height);
+    settings.party_row_gap = normalize_frame_row_gap(settings.party_row_gap, settings.row_gap);
+    settings.party_opacity = normalize_frame_opacity(settings.party_opacity, settings.opacity);
+    settings.pet_frame_width = normalize_frame_width(settings.pet_frame_width, settings.frame_width);
+    settings.pet_row_height = normalize_frame_row_height(settings.pet_row_height, settings.row_height);
+    settings.pet_row_gap = normalize_frame_row_gap(settings.pet_row_gap, settings.row_gap);
+    settings.pet_opacity = normalize_frame_opacity(settings.pet_opacity, settings.opacity);
+    settings.target_frame_width = normalize_frame_width(settings.target_frame_width, settings.frame_width);
+    settings.target_row_height = normalize_frame_row_height(settings.target_row_height, settings.row_height);
+    settings.target_row_gap = normalize_frame_row_gap(settings.target_row_gap, settings.row_gap);
+    settings.target_opacity = normalize_frame_opacity(settings.target_opacity, settings.opacity);
     settings.buff_reminders = normalize_buff_reminders(settings.buff_reminders);
     settings.target_debuff_reminders = normalize_target_debuff_reminders(settings.target_debuff_reminders);
     settings.buff_reminder_suppressed_zone_ids = normalize_zone_id_list(settings.buff_reminder_suppressed_zone_ids);
@@ -2056,6 +2126,19 @@ local function config_text_from_settings(settings)
         ('        row_gap = %d,'):fmt(settings.row_gap),
         ('        opacity = %d,'):fmt(settings.opacity),
         '',
+        ('        party_frame_width = %d,'):fmt(settings.party_frame_width),
+        ('        party_row_height = %d,'):fmt(settings.party_row_height),
+        ('        party_row_gap = %d,'):fmt(settings.party_row_gap),
+        ('        party_opacity = %d,'):fmt(settings.party_opacity),
+        ('        pet_frame_width = %d,'):fmt(settings.pet_frame_width),
+        ('        pet_row_height = %d,'):fmt(settings.pet_row_height),
+        ('        pet_row_gap = %d,'):fmt(settings.pet_row_gap),
+        ('        pet_opacity = %d,'):fmt(settings.pet_opacity),
+        ('        target_frame_width = %d,'):fmt(settings.target_frame_width),
+        ('        target_row_height = %d,'):fmt(settings.target_row_height),
+        ('        target_row_gap = %d,'):fmt(settings.target_row_gap),
+        ('        target_opacity = %d,'):fmt(settings.target_opacity),
+        '',
         '        buff_reminders = {',
     };
 
@@ -2472,11 +2555,12 @@ local function draw_target_debuff_icon_row(unit, x, y, width, alpha)
     imgui.SetCursorScreenPos({ x, y });
 end
 
-local function draw_unit_row(unit, width, row_height)
+local function draw_unit_row(unit, layout, row_height)
     local x, y = imgui.GetCursorScreenPos();
     local draw_list = imgui.GetWindowDrawList();
     local settings = state.settings;
-    local alpha = (settings.opacity / 100) * (unit.dim and 0.62 or 1.0);
+    local width = layout.width;
+    local alpha = (layout.opacity / 100) * (unit.dim and 0.62 or 1.0);
     local row_bg = unit.dim and COLORS.row_dim or COLORS.row_bg;
     local border = unit.kind == 'target' and COLORS.row_border_active or COLORS.row_border;
     local hp = percent_value(unit.hp_pct);
@@ -2519,21 +2603,21 @@ local function draw_unit_row(unit, width, row_height)
         draw_text(draw_list, x + width - hp_text_width - 8, hp_y - 13, COLORS.text, hp_text);
     end
 
-    imgui.Dummy({ width, row_height + settings.row_gap });
+    imgui.Dummy({ width, row_height + layout.row_gap });
 end
 
-local function effective_row_height(unit)
+local function effective_row_height(unit, layout)
     if (unit.kind == 'party' and state.settings.show_buffs) then
-        return math.max(state.settings.row_height, LIMITS.party_row_height_with_buffs_min);
+        return math.max(layout.row_height, LIMITS.party_row_height_with_buffs_min);
     end
     if (unit.kind == 'target' and state.settings.show_target_debuffs and target_debuff_target_eligible(unit)) then
-        return math.max(state.settings.row_height, LIMITS.target_row_height_with_debuffs_min);
+        return math.max(layout.row_height, LIMITS.target_row_height_with_debuffs_min);
     end
 
-    return state.settings.row_height;
+    return layout.row_height;
 end
 
-local function render_window(title, open_state, x, y, width, units, position_callback)
+local function render_window(title, open_state, x, y, layout, units, position_callback)
     local settings = state.settings;
     if (#units == 0) then
         return;
@@ -2542,7 +2626,7 @@ local function render_window(title, open_state, x, y, width, units, position_cal
     local locked = settings.locked == true;
     local window_flags = locked and WINDOW_FLAGS_LOCKED or WINDOW_FLAGS_BASE;
     local pad = locked and 4 or 8;
-    local alpha = settings.opacity / 100;
+    local alpha = layout.opacity / 100;
 
     imgui.SetNextWindowPos({ x, y }, locked and ImGuiCond_Always or ImGuiCond_FirstUseEver);
     imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { pad, pad });
@@ -2555,7 +2639,7 @@ local function render_window(title, open_state, x, y, width, units, position_cal
         position_callback(current_x, current_y);
 
         for _, unit in ipairs(units) do
-            draw_unit_row(unit, width, effective_row_height(unit));
+            draw_unit_row(unit, layout, effective_row_height(unit, layout));
         end
     end
 
@@ -2579,7 +2663,7 @@ local function render_target()
         state.visible,
         state.target_window_x,
         state.target_window_y,
-        state.settings.frame_width,
+        frame_layout('target'),
         { unit },
         function (x, y)
             state.target_window_x = math.floor(x + 0.5);
@@ -2598,7 +2682,7 @@ local function render_party()
         state.visible,
         state.party_window_x,
         state.party_window_y,
-        state.settings.frame_width,
+        frame_layout('party'),
         units,
         function (x, y)
             state.party_window_x = math.floor(x + 0.5);
@@ -2621,7 +2705,7 @@ function render_pet()
         state.visible,
         state.pet_window_x,
         state.pet_window_y,
-        state.settings.frame_width,
+        frame_layout('pet'),
         { unit },
         function (x, y)
             state.pet_window_x = math.floor(x + 0.5);
@@ -2644,6 +2728,31 @@ local function render_int_control(label, id, value, min_value, max_value, apply_
     if (changed) then
         apply_value(buffer[1]);
     end
+end
+
+function render_frame_layout_controls(kind, label)
+    local width_field = ('%s_frame_width'):fmt(kind);
+    local row_height_field = ('%s_row_height'):fmt(kind);
+    local row_gap_field = ('%s_row_gap'):fmt(kind);
+    local opacity_field = ('%s_opacity'):fmt(kind);
+
+    imgui.TextColored(COLORS.accent, label);
+    render_int_control('Width', ('%s_frame_width'):fmt(kind), state.settings[width_field], LIMITS.width_min, LIMITS.width_max, function (value)
+        state.settings[width_field] = normalize_frame_width(value, state.settings.frame_width);
+        mark_config_changed();
+    end);
+    render_int_control('Base Row Height', ('%s_row_height'):fmt(kind), state.settings[row_height_field], LIMITS.row_height_min, LIMITS.row_height_max, function (value)
+        state.settings[row_height_field] = normalize_frame_row_height(value, state.settings.row_height);
+        mark_config_changed();
+    end);
+    render_int_control('Row Gap', ('%s_row_gap'):fmt(kind), state.settings[row_gap_field], LIMITS.row_gap_min, LIMITS.row_gap_max, function (value)
+        state.settings[row_gap_field] = normalize_frame_row_gap(value, state.settings.row_gap);
+        mark_config_changed();
+    end);
+    render_int_control('Opacity', ('%s_opacity'):fmt(kind), state.settings[opacity_field], LIMITS.opacity_min, LIMITS.opacity_max, function (value)
+        state.settings[opacity_field] = normalize_frame_opacity(value, state.settings.opacity);
+        mark_config_changed();
+    end, '%');
 end
 
 local function render_profile_bool(profile, field, label, id)
@@ -2908,26 +3017,16 @@ local function render_config_window()
 
         imgui.Separator();
         imgui.TextColored(COLORS.accent, 'Layout');
-        render_int_control('Frame Width', 'frame_width', state.settings.frame_width, LIMITS.width_min, LIMITS.width_max, function (value)
-            state.settings.frame_width = clamp_int(value, LIMITS.width_min, LIMITS.width_max);
-            mark_config_changed();
-        end);
-        render_int_control('Base Row Height', 'row_height', state.settings.row_height, LIMITS.row_height_min, LIMITS.row_height_max, function (value)
-            state.settings.row_height = clamp_int(value, LIMITS.row_height_min, LIMITS.row_height_max);
-            mark_config_changed();
-        end);
-        render_int_control('Row Gap', 'row_gap', state.settings.row_gap, LIMITS.row_gap_min, LIMITS.row_gap_max, function (value)
-            state.settings.row_gap = clamp_int(value, LIMITS.row_gap_min, LIMITS.row_gap_max);
-            mark_config_changed();
-        end);
+        render_frame_layout_controls('party', 'Party Frame');
+        imgui.Separator();
+        render_frame_layout_controls('pet', 'Pet Frame');
+        imgui.Separator();
+        render_frame_layout_controls('target', 'Target Frame');
+        imgui.Separator();
         render_int_control('Max Buffs', 'max_buffs', state.settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max, function (value)
             state.settings.max_buffs = clamp_int(value, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
             mark_config_changed();
         end, 'buffs');
-        render_int_control('Opacity', 'opacity', state.settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max, function (value)
-            state.settings.opacity = clamp_int(value, LIMITS.opacity_min, LIMITS.opacity_max);
-            mark_config_changed();
-        end, '%');
 
         imgui.Separator();
         imgui.Text(('Party pos: %d, %d'):fmt(state.party_window_x, state.party_window_y));
@@ -2998,7 +3097,7 @@ local function print_status()
     local reminder_job = current_player_job_key();
     local reminder_profile = reminder_profile_for_job(reminder_job);
 
-    log_info(('visible=%s locked=%s target=%s party=%s pet=%s alliance=%s buffs=%s reminders=%s targetDebuffs=%s targetDebuffReminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d width=%d rowHeight=%d opacity=%d party=(%d,%d) pet=(%d,%d) target=(%d,%d)'):fmt(
+    log_info(('visible=%s locked=%s target=%s party=%s pet=%s alliance=%s buffs=%s reminders=%s targetDebuffs=%s targetDebuffReminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d party=(%d,%d %dx%d gap=%d op=%d) pet=(%d,%d %dx%d gap=%d op=%d) target=(%d,%d %dx%d gap=%d op=%d)'):fmt(
         tostring(state.visible[1] == true),
         tostring(state.settings.locked == true),
         tostring(state.settings.show_target == true),
@@ -3015,15 +3114,24 @@ local function print_status()
         state.observed_text_events,
         state.observed_log_events,
         state.settings.max_buffs,
-        state.settings.frame_width,
-        state.settings.row_height,
-        state.settings.opacity,
         state.party_window_x,
         state.party_window_y,
+        state.settings.party_frame_width,
+        state.settings.party_row_height,
+        state.settings.party_row_gap,
+        state.settings.party_opacity,
         state.pet_window_x,
         state.pet_window_y,
+        state.settings.pet_frame_width,
+        state.settings.pet_row_height,
+        state.settings.pet_row_gap,
+        state.settings.pet_opacity,
         state.target_window_x,
-        state.target_window_y));
+        state.target_window_y,
+        state.settings.target_frame_width,
+        state.settings.target_row_height,
+        state.settings.target_row_gap,
+        state.settings.target_opacity));
 
     if (state.config_error ~= nil) then
         log_error('Config load warning: ' .. state.config_error);

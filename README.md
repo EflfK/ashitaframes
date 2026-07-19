@@ -117,8 +117,10 @@ for that job, choose self/player/trust targets, and toggle Protect or Shell.
 The Target Debuff Reminders section lets you pick a main-job profile and toggle
 Dia, Paralyze, or Slow reminders for the target frame.
 Use Save to write the current window layout and reminder settings to
-`ashitaframes_config.lua`. Reminder options are filtered to spells your current
-main/sub job can actually cast and that your character has learned. Missing
+`ashitaframes_config.lua`. Party, Pet, and Target frame width, base row height,
+row gap, and opacity are configured independently. Reminder options are
+filtered to spells your current main/sub job can actually cast and that your
+character has learned. Missing
 target-debuff reminders are also hidden while the spell is on cooldown. Missing
 party-buff reminder flashes are hidden in towns by default; the config window
 can also suppress or allow the current non-town zone.
@@ -164,6 +166,18 @@ return {
         row_height = 56,
         row_gap = 5,
         opacity = 88,
+        party_frame_width = 232,
+        party_row_height = 56,
+        party_row_gap = 5,
+        party_opacity = 88,
+        pet_frame_width = 232,
+        pet_row_height = 56,
+        pet_row_gap = 5,
+        pet_opacity = 88,
+        target_frame_width = 232,
+        target_row_height = 56,
+        target_row_gap = 5,
+        target_opacity = 88,
 
         buff_reminders = {
             default = {
@@ -192,6 +206,10 @@ return {
     },
 }
 ```
+
+The base `frame_width`, `row_height`, `row_gap`, and `opacity` keys are kept as
+fallbacks for older configs. New saves write separate `party_*`, `pet_*`, and
+`target_*` layout values.
 
 `buff_reminders` is keyed by your current main job. Each profile can enable or
 disable reminders for yourself (`self`), other players (`players`), and trusts
