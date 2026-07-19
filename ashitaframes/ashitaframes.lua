@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.1';
+addon.version   = '0.3.2';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -514,42 +514,91 @@ local function player_buffs()
     return result;
 end
 
-local function party_status_buffs(server_id)
-    server_id = tonumber(server_id) or 0;
-    if (server_id == 0) then
-        return { };
-    end
-
+local function party_status_base()
     local pointer_manager = safe_read(function () return AshitaCore:GetPointerManager(); end, nil);
     local pointer = pointer_manager ~= nil and safe_read(function () return pointer_manager:Get('party.statusicons'); end, 0) or 0;
     local base = pointer ~= 0 and safe_read(function () return ashita.memory.read_uint32(pointer); end, 0) or 0;
     if (base == 0) then
-        return { };
+        return 0;
+    end
+
+    return base;
+end
+
+local function party_status_member_ptr(base, member_index)
+    member_index = tonumber(member_index);
+    if (base == nil or base == 0 or member_index == nil or member_index < 0 or member_index > 4) then
+        return 0;
+    end
+
+    return base + (0x30 * member_index);
+end
+
+local function party_status_row_buffs(member_ptr)
+    local result = { };
+    local seen = { };
+
+    if (member_ptr == nil or member_ptr == 0) then
+        return result;
+    end
+
+    for buff_index = 0, 31, 1 do
+        local high_bits = safe_read(function () return ashita.memory.read_uint8(member_ptr + 8 + math.floor(buff_index / 4)); end, 0);
+        local shift = math.fmod(buff_index, 4) * 2;
+        high_bits = bit.lshift(bit.band(bit.rshift(high_bits, shift), 0x03), 8);
+
+        local low_bits = safe_read(function () return ashita.memory.read_uint8(member_ptr + 16 + buff_index); end, 255);
+        local buff_id = high_bits + low_bits;
+        if (buff_id == 255) then
+            break;
+        end
+
+        append_buff_id(result, seen, buff_id);
+    end
+
+    return result;
+end
+
+local function party_status_buffs_by_server_id(base, server_id)
+    server_id = tonumber(server_id) or 0;
+    if (base == 0 or server_id == 0) then
+        return nil;
     end
 
     for member_index = 0, 4, 1 do
-        local member_ptr = base + (0x30 * member_index);
+        local member_ptr = party_status_member_ptr(base, member_index);
         local player_id = safe_read(function () return ashita.memory.read_uint32(member_ptr); end, 0);
         if (player_id == server_id) then
-            local result = { };
-            local seen = { };
-
-            for buff_index = 0, 31, 1 do
-                local high_bits = safe_read(function () return ashita.memory.read_uint8(member_ptr + 8 + math.floor(buff_index / 4)); end, 0);
-                local shift = math.fmod(buff_index, 4) * 2;
-                high_bits = bit.lshift(bit.band(bit.rshift(high_bits, shift), 0x03), 8);
-
-                local low_bits = safe_read(function () return ashita.memory.read_uint8(member_ptr + 16 + buff_index); end, 255);
-                local buff_id = high_bits + low_bits;
-                if (buff_id == 255) then
-                    break;
-                end
-
-                append_buff_id(result, seen, buff_id);
-            end
-
-            return result;
+            return party_status_row_buffs(member_ptr);
         end
+    end
+
+    return nil;
+end
+
+local function party_status_buffs_by_party_slot(base, party_index)
+    party_index = tonumber(party_index) or 0;
+    if (base == 0 or party_index < 1 or party_index > 5) then
+        return nil;
+    end
+
+    return party_status_row_buffs(party_status_member_ptr(base, party_index - 1));
+end
+
+local function party_status_buffs(party_index, server_id)
+    local base = party_status_base();
+    if (base == 0) then
+        return { };
+    end
+
+    local by_id = party_status_buffs_by_server_id(base, server_id);
+    if (by_id ~= nil) then
+        return by_id;
+    end
+
+    local by_slot = party_status_buffs_by_party_slot(base, party_index);
+    if (by_slot ~= nil) then
+        return by_slot;
     end
 
     return { };
@@ -564,7 +613,7 @@ local function party_member_buffs(party, index, server_id, same_zone)
         return player_buffs();
     end
 
-    return party_status_buffs(server_id);
+    return party_status_buffs(index, server_id);
 end
 
 local function buff_name(buff_id)
