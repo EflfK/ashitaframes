@@ -20,8 +20,9 @@ clean while important unit information remains visible elsewhere on screen.
 - Shows large missing-buff reminders for mapped buffs configured per current
   player job. Missing reminders flash with a crossed icon; active buffs show
   as normal icons. Protect and Shell are mapped first.
-- Includes an in-game configuration window for visibility, locking, sizing,
-  opacity, party buff display, missing-buff reminders, and alliance display.
+- Includes a persistent in-game configuration window for visibility, locking,
+  sizing, opacity, party buff display, missing-buff reminders, and alliance
+  display.
 - Provides local UI commands only. It does not target, cast, click-cast, send
   gameplay commands, inject packets, write memory, or automate actions.
 
@@ -93,6 +94,19 @@ Short alias:
 
 ## Configure
 
+Open the in-game configuration window:
+
+```text
+/ashitaframes config
+```
+
+The Buff Reminders section lets you pick a main-job profile, enable reminders
+for that job, choose self/player/trust targets, and toggle Protect or Shell.
+Use Save to write the current window layout and reminder settings to
+`ashitaframes_config.lua`.
+
+Manual config is still supported:
+
 Edit:
 
 ```text
@@ -150,10 +164,6 @@ return {
 `buff_reminders` is keyed by your current main job. Each profile can enable or
 disable reminders for yourself (`self`), other players (`players`), and trusts
 (`trusts`). Supported reminder keys are currently `protect` and `shell`.
-
-Runtime changes made in the config window are not persisted yet. When a layout
-feels right, copy the positions and sizing shown by `/ashitaframes status` into
-`ashitaframes_config.lua`.
 
 ## Development
 

@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.0';
+addon.version   = '0.3.1';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -38,6 +38,11 @@ local JOBS = {
     [20] = 'SCH',
     [21] = 'GEO',
     [22] = 'RUN',
+};
+
+local JOB_ORDER = {
+    'WAR', 'MNK', 'WHM', 'BLM', 'RDM', 'THF', 'PLD', 'DRK', 'BST', 'BRD', 'RNG',
+    'SAM', 'NIN', 'DRG', 'SMN', 'BLU', 'COR', 'PUP', 'DNC', 'SCH', 'GEO', 'RUN',
 };
 
 local DEFAULT_SETTINGS = {
@@ -141,6 +146,9 @@ local state = {
     visible = { true },
     config_visible = { false },
     config_error = nil,
+    config_save_message = nil,
+    config_save_message_color = nil,
+    config_job_key = nil,
     buff_name_cache = { },
     buff_icon_cache = { },
     party_window_x = 36,
@@ -396,6 +404,8 @@ local function load_config()
     end
 
     state.config_error = nil;
+    state.config_save_message = nil;
+    state.config_save_message_color = nil;
     package.loaded.ashitaframes_config = nil;
 
     local ok, config = pcall(require, 'ashitaframes_config');
@@ -653,6 +663,68 @@ local function reminder_profile_for_job(job)
     return reminders[job] or reminders.default or BUFF_REMINDER_PROFILE_DEFAULT;
 end
 
+local function ensure_reminder_profile(job)
+    if (type(state.settings.buff_reminders) ~= 'table') then
+        state.settings.buff_reminders = normalize_buff_reminders(nil);
+    end
+    if (type(state.settings.buff_reminders.default) ~= 'table') then
+        state.settings.buff_reminders.default = normalize_reminder_profile(nil, BUFF_REMINDER_PROFILE_DEFAULT);
+    end
+
+    job = normalize_job_key(job);
+    if (#job == 0 or job == 'DEFAULT') then
+        return state.settings.buff_reminders.default;
+    end
+
+    if (type(state.settings.buff_reminders[job]) ~= 'table') then
+        state.settings.buff_reminders[job] = normalize_reminder_profile(nil, state.settings.buff_reminders.default);
+    end
+
+    return state.settings.buff_reminders[job];
+end
+
+local function buff_list_has(buffs, key)
+    key = normalize_buff_key(key);
+    if (key == nil or type(buffs) ~= 'table') then
+        return false;
+    end
+
+    for _, value in ipairs(buffs) do
+        if (normalize_buff_key(value) == key) then
+            return true;
+        end
+    end
+
+    return false;
+end
+
+local function set_profile_buff_enabled(profile, key, enabled)
+    if (type(profile) ~= 'table') then
+        return;
+    end
+
+    key = normalize_buff_key(key);
+    if (key == nil) then
+        return;
+    end
+
+    local result = { };
+    local seen = { };
+    for _, value in ipairs(profile.buffs or { }) do
+        local existing = normalize_buff_key(value);
+        if (existing ~= nil and existing ~= key and not seen[existing]) then
+            seen[existing] = true;
+            table.insert(result, existing);
+        end
+    end
+
+    if (enabled == true and not seen[key]) then
+        table.insert(result, key);
+    end
+
+    profile.buffs = result;
+end
+
 local function unit_reminder_enabled(unit, profile)
     if (unit.same_zone == false or profile.enabled ~= true) then
         return false;
@@ -759,6 +831,200 @@ local function party_member_category(index, target_index)
     end
 
     return 'player';
+end
+
+local function mark_config_changed()
+    state.config_save_message = nil;
+    state.config_save_message_color = nil;
+end
+
+local function job_order_index(job)
+    job = normalize_job_key(job);
+    for index, value in ipairs(JOB_ORDER) do
+        if (value == job) then
+            return index;
+        end
+    end
+
+    return 1;
+end
+
+local function current_config_job_key()
+    local current_job = current_player_job_key();
+    if (current_job == 'default') then
+        current_job = 'BST';
+    end
+
+    local selected = normalize_job_key(state.config_job_key);
+    if (#selected == 0) then
+        selected = current_job;
+    end
+
+    state.config_job_key = selected;
+    return selected;
+end
+
+local function step_config_job(delta)
+    local index = job_order_index(current_config_job_key());
+    index = ((index - 1 + delta) % #JOB_ORDER) + 1;
+    state.config_job_key = JOB_ORDER[index];
+    mark_config_changed();
+end
+
+local function path_join(left, right)
+    left = tostring(left or '');
+    right = tostring(right or '');
+    if (#left == 0) then
+        return right;
+    end
+
+    local last = left:sub(#left);
+    if (last == '\\' or last == '/') then
+        return left .. right;
+    end
+
+    return left .. '\\' .. right;
+end
+
+local function config_file_path()
+    return path_join(addon.path, 'ashitaframes_config.lua');
+end
+
+local function bool_text(value)
+    return value == true and 'true' or 'false';
+end
+
+local function buff_list_text(buffs)
+    local normalized = normalize_buff_list(buffs);
+    if (#normalized == 0) then
+        return '{ }';
+    end
+
+    local pieces = { };
+    for _, key in ipairs(normalized) do
+        table.insert(pieces, ("'%s'"):fmt(key));
+    end
+
+    return ('{ %s }'):fmt(table.concat(pieces, ', '));
+end
+
+local function config_key_text(key)
+    if (key == 'default' or key:match('^%a[%w_]*$') ~= nil) then
+        return key;
+    end
+
+    return ('[%q]'):fmt(key);
+end
+
+local function reminder_profile_keys(reminders)
+    local keys = { 'default' };
+    local seen = { default = true };
+
+    for _, job in ipairs(JOB_ORDER) do
+        if (type(reminders[job]) == 'table') then
+            table.insert(keys, job);
+            seen[job] = true;
+        end
+    end
+
+    local extra = { };
+    for key, value in pairs(reminders) do
+        if (type(key) == 'string' and not seen[key] and type(value) == 'table') then
+            table.insert(extra, key);
+        end
+    end
+    table.sort(extra);
+
+    for _, key in ipairs(extra) do
+        table.insert(keys, key);
+    end
+
+    return keys;
+end
+
+local function append_profile_config(lines, key, profile)
+    profile = normalize_reminder_profile(profile, state.settings.buff_reminders.default);
+
+    table.insert(lines, ('            %s = {'):fmt(config_key_text(key)));
+    table.insert(lines, ('                enabled = %s,'):fmt(bool_text(profile.enabled)));
+    table.insert(lines, ('                self = %s,'):fmt(bool_text(profile.self)));
+    table.insert(lines, ('                players = %s,'):fmt(bool_text(profile.players)));
+    table.insert(lines, ('                trusts = %s,'):fmt(bool_text(profile.trusts)));
+    table.insert(lines, ('                buffs = %s,'):fmt(buff_list_text(profile.buffs)));
+    table.insert(lines, '            },');
+end
+
+local function capture_runtime_settings_for_save()
+    state.settings.visible = state.visible[1] == true;
+    state.settings.party_window_x = state.party_window_x;
+    state.settings.party_window_y = state.party_window_y;
+    state.settings.target_window_x = state.target_window_x;
+    state.settings.target_window_y = state.target_window_y;
+    state.settings.buff_reminders = normalize_buff_reminders(state.settings.buff_reminders);
+
+    return normalize_settings(state.settings);
+end
+
+local function config_text_from_settings(settings)
+    local reminders = settings.buff_reminders or normalize_buff_reminders(nil);
+    local lines = {
+        'return {',
+        '    settings = {',
+        ('        visible = %s,'):fmt(bool_text(settings.visible)),
+        ('        locked = %s,'):fmt(bool_text(settings.locked)),
+        '',
+        ('        show_target = %s,'):fmt(bool_text(settings.show_target)),
+        ('        show_party = %s,'):fmt(bool_text(settings.show_party)),
+        ('        show_alliance = %s,'):fmt(bool_text(settings.show_alliance)),
+        ('        show_empty_target = %s,'):fmt(bool_text(settings.show_empty_target)),
+        '',
+        ('        same_zone_dim = %s,'):fmt(bool_text(settings.same_zone_dim)),
+        ('        show_jobs = %s,'):fmt(bool_text(settings.show_jobs)),
+        ('        show_percent = %s,'):fmt(bool_text(settings.show_percent)),
+        ('        show_tp = %s,'):fmt(bool_text(settings.show_tp)),
+        ('        show_buffs = %s,'):fmt(bool_text(settings.show_buffs)),
+        ('        show_buff_reminders = %s,'):fmt(bool_text(settings.show_buff_reminders)),
+        ('        max_buffs = %d,'):fmt(settings.max_buffs),
+        '',
+        ('        party_window_x = %d,'):fmt(state.party_window_x),
+        ('        party_window_y = %d,'):fmt(state.party_window_y),
+        ('        target_window_x = %d,'):fmt(state.target_window_x),
+        ('        target_window_y = %d,'):fmt(state.target_window_y),
+        '',
+        ('        frame_width = %d,'):fmt(settings.frame_width),
+        ('        row_height = %d,'):fmt(settings.row_height),
+        ('        row_gap = %d,'):fmt(settings.row_gap),
+        ('        opacity = %d,'):fmt(settings.opacity),
+        '',
+        '        buff_reminders = {',
+    };
+
+    for _, key in ipairs(reminder_profile_keys(reminders)) do
+        append_profile_config(lines, key, reminders[key]);
+        table.insert(lines, '');
+    end
+
+    table.insert(lines, '        },');
+    table.insert(lines, '    },');
+    table.insert(lines, '}');
+    table.insert(lines, '');
+
+    return table.concat(lines, '\n');
+end
+
+local function save_config()
+    local settings = capture_runtime_settings_for_save();
+    local path = config_file_path();
+    local file, error_message = io.open(path, 'w');
+    if (file == nil) then
+        return false, tostring(error_message or 'open failed');
+    end
+
+    file:write(config_text_from_settings(settings));
+    file:close();
+
+    state.settings = settings;
+    return true, ('Saved %s.'):fmt(path);
 end
 
 local function party_member_unit(party, index, self_zone, reminder_job)
@@ -1166,6 +1432,67 @@ local function render_int_control(label, id, value, min_value, max_value, apply_
     end
 end
 
+local function render_profile_bool(profile, field, label, id)
+    local value = profile[field] == true;
+    if (imgui.Checkbox(('%s##ashitaframes_%s'):fmt(label, id), { value })) then
+        profile[field] = not value;
+        mark_config_changed();
+    end
+end
+
+local function render_profile_buff_toggle(profile, key, label)
+    local enabled = buff_list_has(profile.buffs, key);
+    if (imgui.Checkbox(('%s##ashitaframes_buff_reminder_%s'):fmt(label, key), { enabled })) then
+        set_profile_buff_enabled(profile, key, not enabled);
+        mark_config_changed();
+    end
+end
+
+local function render_buff_reminder_config()
+    imgui.Separator();
+    imgui.TextColored(COLORS.accent, 'Buff Reminders');
+
+    local current_job = current_player_job_key();
+    local selected_job = current_config_job_key();
+
+    if (imgui.Button('<##ashitaframes_reminder_job_prev', { 26, 0 })) then
+        step_config_job(-1);
+        selected_job = current_config_job_key();
+    end
+    imgui.SameLine(0, 6);
+    imgui.Text(('Job: %s'):fmt(selected_job));
+    imgui.SameLine(0, 6);
+    if (imgui.Button('>##ashitaframes_reminder_job_next', { 26, 0 })) then
+        step_config_job(1);
+        selected_job = current_config_job_key();
+    end
+    imgui.SameLine(0, 10);
+    if (imgui.Button('Current##ashitaframes_reminder_job_current')) then
+        if (current_job ~= 'default') then
+            state.config_job_key = current_job;
+            selected_job = current_config_job_key();
+            mark_config_changed();
+        end
+    end
+    imgui.SameLine(0, 8);
+    imgui.TextColored(COLORS.text_muted, ('Now: %s'):fmt(current_job));
+
+    local profile = ensure_reminder_profile(selected_job);
+    render_profile_bool(profile, 'enabled', 'Enable Job Profile', ('reminder_%s_enabled'):fmt(selected_job));
+
+    imgui.TextColored(COLORS.text_muted, 'Units');
+    render_profile_bool(profile, 'self', 'Self', ('reminder_%s_self'):fmt(selected_job));
+    imgui.SameLine(0, 12);
+    render_profile_bool(profile, 'players', 'Players', ('reminder_%s_players'):fmt(selected_job));
+    imgui.SameLine(0, 12);
+    render_profile_bool(profile, 'trusts', 'Trusts', ('reminder_%s_trusts'):fmt(selected_job));
+
+    imgui.TextColored(COLORS.text_muted, 'Buffs');
+    render_profile_buff_toggle(profile, 'protect', 'Protect');
+    imgui.SameLine(0, 12);
+    render_profile_buff_toggle(profile, 'shell', 'Shell');
+end
+
 local function render_config_window()
     if (not state.config_visible[1]) then
         return;
@@ -1179,77 +1506,96 @@ local function render_config_window()
         if (imgui.Checkbox('Show Frames##ashitaframes_show_frames', { visible })) then
             state.visible[1] = not visible;
             state.settings.visible = state.visible[1];
+            mark_config_changed();
         end
 
         local locked = state.settings.locked == true;
         if (imgui.Checkbox('Lock Frames##ashitaframes_lock_frames', { locked })) then
             state.settings.locked = not locked;
+            mark_config_changed();
         end
 
         local show_target = state.settings.show_target == true;
         if (imgui.Checkbox('Target Frame##ashitaframes_show_target', { show_target })) then
             state.settings.show_target = not show_target;
+            mark_config_changed();
         end
 
         local show_party = state.settings.show_party == true;
         if (imgui.Checkbox('Party Frame##ashitaframes_show_party', { show_party })) then
             state.settings.show_party = not show_party;
+            mark_config_changed();
         end
 
         local show_alliance = state.settings.show_alliance == true;
         if (imgui.Checkbox('Alliance Slots##ashitaframes_show_alliance', { show_alliance })) then
             state.settings.show_alliance = not show_alliance;
+            mark_config_changed();
         end
 
         local same_zone_dim = state.settings.same_zone_dim == true;
         if (imgui.Checkbox('Dim Different Zone##ashitaframes_same_zone_dim', { same_zone_dim })) then
             state.settings.same_zone_dim = not same_zone_dim;
+            mark_config_changed();
         end
 
         local show_buffs = state.settings.show_buffs == true;
         if (imgui.Checkbox('Party Buffs##ashitaframes_show_buffs', { show_buffs })) then
             state.settings.show_buffs = not show_buffs;
             state.settings = normalize_settings(state.settings);
+            mark_config_changed();
         end
 
         local show_buff_reminders = state.settings.show_buff_reminders == true;
         if (imgui.Checkbox('Missing Buff Reminders##ashitaframes_show_buff_reminders', { show_buff_reminders })) then
             state.settings.show_buff_reminders = not show_buff_reminders;
+            mark_config_changed();
         end
 
-        local reminder_job = current_player_job_key();
-        local reminder_profile = reminder_profile_for_job(reminder_job);
-        local reminder_buffs = table.concat(reminder_profile.buffs or { }, ', ');
-        if (#reminder_buffs == 0) then
-            reminder_buffs = 'none';
-        end
-        imgui.TextColored(COLORS.text_muted, ('Reminder profile: %s %s [%s]'):fmt(
-            reminder_job,
-            reminder_profile.enabled and 'on' or 'off',
-            reminder_buffs));
+        render_buff_reminder_config();
 
         imgui.Separator();
         imgui.TextColored(COLORS.accent, 'Layout');
         render_int_control('Frame Width', 'frame_width', state.settings.frame_width, LIMITS.width_min, LIMITS.width_max, function (value)
             state.settings.frame_width = clamp_int(value, LIMITS.width_min, LIMITS.width_max);
+            mark_config_changed();
         end);
         render_int_control('Base Row Height', 'row_height', state.settings.row_height, LIMITS.row_height_min, LIMITS.row_height_max, function (value)
             state.settings.row_height = clamp_int(value, LIMITS.row_height_min, LIMITS.row_height_max);
+            mark_config_changed();
         end);
         render_int_control('Row Gap', 'row_gap', state.settings.row_gap, LIMITS.row_gap_min, LIMITS.row_gap_max, function (value)
             state.settings.row_gap = clamp_int(value, LIMITS.row_gap_min, LIMITS.row_gap_max);
+            mark_config_changed();
         end);
         render_int_control('Max Buffs', 'max_buffs', state.settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max, function (value)
             state.settings.max_buffs = clamp_int(value, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
+            mark_config_changed();
         end, 'buffs');
         render_int_control('Opacity', 'opacity', state.settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max, function (value)
             state.settings.opacity = clamp_int(value, LIMITS.opacity_min, LIMITS.opacity_max);
+            mark_config_changed();
         end, '%');
 
         imgui.Separator();
         imgui.Text(('Party pos: %d, %d'):fmt(state.party_window_x, state.party_window_y));
         imgui.Text(('Target pos: %d, %d'):fmt(state.target_window_x, state.target_window_y));
-        imgui.Text('Runtime changes are not persisted yet.');
+
+        if (imgui.Button('Save##ashitaframes_config_save')) then
+            local ok, message = save_config();
+            state.config_save_message = ok and 'Saved.' or 'Save failed.';
+            state.config_save_message_color = ok and COLORS.accent or COLORS.warning;
+            if (ok) then
+                log_info(message);
+            else
+                log_error(message);
+            end
+        end
+
+        if (state.config_save_message ~= nil) then
+            imgui.SameLine(0, 8);
+            imgui.TextColored(state.config_save_message_color or COLORS.accent, state.config_save_message);
+        end
 
         if (state.config_error ~= nil) then
             imgui.Separator();
