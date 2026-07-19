@@ -3,6 +3,7 @@ return {
         visible = true,
         locked = false,
 
+        show_self = true,
         show_target = true,
         show_party = true,
         show_pet = true,
@@ -22,6 +23,8 @@ return {
         max_buffs = 8,
         party_preview_size = 6,
 
+        self_window_x = 36,
+        self_window_y = 164,
         party_window_x = 36,
         party_window_y = 362,
         pet_window_x = 36,
@@ -33,6 +36,10 @@ return {
         row_height = 56,
         row_gap = 5,
         opacity = 88,
+        self_frame_width = 232,
+        self_row_height = 56,
+        self_row_gap = 5,
+        self_opacity = 88,
         party_frame_width = 232,
         party_row_height = 56,
         party_row_gap = 5,

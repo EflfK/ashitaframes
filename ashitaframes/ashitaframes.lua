@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.22';
+addon.version   = '0.3.23';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -48,6 +48,7 @@ local JOB_ORDER = {
 local DEFAULT_SETTINGS = {
     visible = true,
     locked = false,
+    show_self = true,
     show_target = true,
     show_party = true,
     show_pet = true,
@@ -65,6 +66,8 @@ local DEFAULT_SETTINGS = {
     buff_reminder_suppressed_zone_ids = { },
     max_buffs = 8,
     party_preview_size = 6,
+    self_window_x = 36,
+    self_window_y = 164,
     party_window_x = 36,
     party_window_y = 362,
     pet_window_x = 36,
@@ -75,6 +78,10 @@ local DEFAULT_SETTINGS = {
     row_height = 56,
     row_gap = 5,
     opacity = 88,
+    self_frame_width = -1,
+    self_row_height = -1,
+    self_row_gap = -1,
+    self_opacity = -1,
     party_frame_width = -1,
     party_row_height = -1,
     party_row_gap = -1,
@@ -281,6 +288,8 @@ local state = {
     observed_log_position = 0,
     observed_log_last_check = 0,
     observed_log_events = 0,
+    self_window_x = 36,
+    self_window_y = 164,
     party_window_x = 36,
     party_window_y = 362,
     pet_window_x = 36,
@@ -409,7 +418,11 @@ function party_layout_for_size(size)
 end
 
 function party_size_from_units(units)
-    return party_size(type(units) == 'table' and #units or 1);
+    if (type(units) == 'table' and tonumber(units.party_size) ~= nil) then
+        return party_size(units.party_size);
+    end
+
+    return party_size(type(units) == 'table' and (#units + 1) or 1);
 end
 
 function update_party_layout_position(size, x, y)
@@ -741,6 +754,7 @@ end
 local function normalize_settings(settings)
     settings.visible = settings.visible ~= false;
     settings.locked = settings.locked == true;
+    settings.show_self = settings.show_self ~= false;
     settings.show_target = settings.show_target ~= false;
     settings.show_party = settings.show_party ~= false;
     settings.show_pet = settings.show_pet ~= false;
@@ -756,6 +770,8 @@ local function normalize_settings(settings)
     settings.show_target_debuff_reminders = settings.show_target_debuff_reminders ~= false;
     settings.hide_buff_reminders_in_towns = settings.hide_buff_reminders_in_towns ~= false;
 
+    settings.self_window_x = clamp_int(settings.self_window_x, -2000, 4000);
+    settings.self_window_y = clamp_int(settings.self_window_y, -2000, 4000);
     settings.party_window_x = clamp_int(settings.party_window_x, -2000, 4000);
     settings.party_window_y = clamp_int(settings.party_window_y, -2000, 4000);
     settings.pet_window_x = clamp_int(settings.pet_window_x, -2000, 4000);
@@ -768,6 +784,10 @@ local function normalize_settings(settings)
     settings.max_buffs = clamp_int(settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
     settings.party_preview_size = party_size(settings.party_preview_size);
     settings.opacity = clamp_int(settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max);
+    settings.self_frame_width = normalize_frame_width(settings.self_frame_width, settings.frame_width);
+    settings.self_row_height = normalize_frame_row_height(settings.self_row_height, settings.row_height);
+    settings.self_row_gap = normalize_frame_row_gap(settings.self_row_gap, settings.row_gap);
+    settings.self_opacity = normalize_frame_opacity(settings.self_opacity, settings.opacity);
     settings.party_frame_width = normalize_frame_width(settings.party_frame_width, settings.frame_width);
     settings.party_row_height = normalize_frame_row_height(settings.party_row_height, settings.row_height);
     settings.party_row_gap = normalize_frame_row_gap(settings.party_row_gap, settings.row_gap);
@@ -808,6 +828,8 @@ local function load_config()
 
     state.settings = normalize_settings(settings);
     state.visible[1] = state.settings.visible;
+    state.self_window_x = state.settings.self_window_x;
+    state.self_window_y = state.settings.self_window_y;
     state.party_window_x = state.settings.party_window_x;
     state.party_window_y = state.settings.party_window_y;
     state.pet_window_x = state.settings.pet_window_x;
@@ -2144,6 +2166,8 @@ end
 
 local function capture_runtime_settings_for_save()
     state.settings.visible = state.visible[1] == true;
+    state.settings.self_window_x = state.self_window_x;
+    state.settings.self_window_y = state.self_window_y;
     state.settings.party_window_x = state.party_window_x;
     state.settings.party_window_y = state.party_window_y;
     state.settings.pet_window_x = state.pet_window_x;
@@ -2167,6 +2191,7 @@ local function config_text_from_settings(settings)
         ('        visible = %s,'):fmt(bool_text(settings.visible)),
         ('        locked = %s,'):fmt(bool_text(settings.locked)),
         '',
+        ('        show_self = %s,'):fmt(bool_text(settings.show_self)),
         ('        show_target = %s,'):fmt(bool_text(settings.show_target)),
         ('        show_party = %s,'):fmt(bool_text(settings.show_party)),
         ('        show_pet = %s,'):fmt(bool_text(settings.show_pet)),
@@ -2186,6 +2211,8 @@ local function config_text_from_settings(settings)
         ('        max_buffs = %d,'):fmt(settings.max_buffs),
         ('        party_preview_size = %d,'):fmt(settings.party_preview_size),
         '',
+        ('        self_window_x = %d,'):fmt(state.self_window_x),
+        ('        self_window_y = %d,'):fmt(state.self_window_y),
         ('        party_window_x = %d,'):fmt(state.party_window_x),
         ('        party_window_y = %d,'):fmt(state.party_window_y),
         ('        pet_window_x = %d,'):fmt(state.pet_window_x),
@@ -2198,6 +2225,10 @@ local function config_text_from_settings(settings)
         ('        row_gap = %d,'):fmt(settings.row_gap),
         ('        opacity = %d,'):fmt(settings.opacity),
         '',
+        ('        self_frame_width = %d,'):fmt(settings.self_frame_width),
+        ('        self_row_height = %d,'):fmt(settings.self_row_height),
+        ('        self_row_gap = %d,'):fmt(settings.self_row_gap),
+        ('        self_opacity = %d,'):fmt(settings.self_opacity),
         ('        party_frame_width = %d,'):fmt(settings.party_frame_width),
         ('        party_row_height = %d,'):fmt(settings.party_row_height),
         ('        party_row_gap = %d,'):fmt(settings.party_row_gap),
@@ -2278,7 +2309,7 @@ local function party_member_unit(party, index, self_zone, reminder_job, reminder
 
     local zone_id = safe_read(function () return party:GetMemberZone(index); end, nil);
     local same_zone = self_zone == nil or zone_id == nil or zone_id == self_zone;
-    local tag = index == 0 and 'YOU' or tostring(index + 1);
+    local tag = index == 0 and 'YOU' or tostring(index);
     local category = party_member_category(index, target_index, server_id);
 
     if (category == 'trust' and same_zone == false) then
@@ -2307,6 +2338,23 @@ local function party_member_unit(party, index, self_zone, reminder_job, reminder
     };
 end
 
+function collect_self_unit()
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    if (memory == nil) then
+        return nil;
+    end
+
+    local party = safe_read(function () return memory:GetParty(); end, nil);
+    if (party == nil) then
+        return nil;
+    end
+
+    local self_zone = safe_read(function () return party:GetMemberZone(0); end, nil);
+    sync_observed_buffs_for_party(party, self_zone);
+
+    return party_member_unit(party, 0, self_zone, current_player_job_key(party), buff_reminders_suppressed_for_zone(self_zone));
+end
+
 local function collect_party_units()
     local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
     if (memory == nil) then
@@ -2323,33 +2371,36 @@ local function collect_party_units()
     local reminders_suppressed = buff_reminders_suppressed_for_zone(self_zone);
     local max_index = state.settings.show_alliance and 17 or 5;
     local units = { };
+    local total_size = party_member_unit(party, 0, self_zone, reminder_job, reminders_suppressed) ~= nil and 1 or 0;
 
     sync_observed_buffs_for_party(party, self_zone);
 
-    for index = 0, max_index, 1 do
+    for index = 1, max_index, 1 do
         local unit = party_member_unit(party, index, self_zone, reminder_job, reminders_suppressed);
         if (unit ~= nil) then
             table.insert(units, unit);
+            total_size = total_size + 1;
         end
     end
 
+    units.party_size = party_size(total_size);
     return units;
 end
 
 function party_preview_unit(index)
     return {
         kind = 'party',
-        tag = index == 0 and 'YOU' or tostring(index + 1),
+        tag = tostring(index),
         index = index,
-        name = index == 0 and 'You' or ('Party %d'):fmt(index + 1),
-        category = index == 0 and 'self' or 'player',
+        name = ('Party %d'):fmt(index),
+        category = 'player',
         reminder_job = current_player_job_key(),
         reminders_suppressed = true,
-        hp_pct = index == 0 and 100 or math.max(48, 100 - (index * 7)),
-        mp_pct = index == 0 and 100 or math.max(34, 92 - (index * 8)),
-        tp = index == 0 and 1000 or index * 230,
-        job = index == 0 and current_player_job_key() or ({ 'WAR30/MNK15', 'WHM30/BLM15', 'SAM30/WAR15', 'BRD30/WHM15', 'RDM30/WHM15' })[index] or '',
-        buffs = index < 2 and { 40, 41 } or { 40 },
+        hp_pct = math.max(48, 100 - (index * 7)),
+        mp_pct = math.max(34, 92 - (index * 8)),
+        tp = index * 230,
+        job = ({ 'WAR30/MNK15', 'WHM30/BLM15', 'SAM30/WAR15', 'BRD30/WHM15', 'RDM30/WHM15' })[index] or '',
+        buffs = index == 1 and { 40, 41 } or { 40 },
         same_zone = true,
         dim = false,
     };
@@ -2359,11 +2410,12 @@ function party_preview_units(units, size)
     size = party_size(size);
 
     local result = { };
-    for index = 1, size, 1 do
+    local display_count = math.max(size - 1, 0);
+    for index = 1, display_count, 1 do
         if (type(units) == 'table' and units[index] ~= nil) then
             table.insert(result, units[index]);
         else
-            table.insert(result, party_preview_unit(index - 1));
+            table.insert(result, party_preview_unit(index));
         end
     end
 
@@ -2792,6 +2844,29 @@ local function render_target()
         end);
 end
 
+function render_self()
+    if (not state.settings.show_self) then
+        return;
+    end
+
+    local unit = collect_self_unit();
+    if (unit == nil) then
+        return;
+    end
+
+    render_window(
+        'AshitaFrames Self###AshitaFramesSelf',
+        state.visible,
+        state.self_window_x,
+        state.self_window_y,
+        frame_layout('self'),
+        { unit },
+        function (x, y)
+            state.self_window_x = math.floor(x + 0.5);
+            state.self_window_y = math.floor(y + 0.5);
+        end);
+end
+
 local function render_party()
     if (not state.settings.show_party) then
         return;
@@ -2931,6 +3006,17 @@ function render_general_config_tab()
     end, 'buffs');
 end
 
+function render_self_frame_config_tab()
+    local show_self = state.settings.show_self == true;
+    if (imgui.Checkbox('Show Self Frame##ashitaframes_show_self', { show_self })) then
+        state.settings.show_self = not show_self;
+        mark_config_changed();
+    end
+
+    imgui.Separator();
+    render_frame_layout_controls('self', 'Self Frame');
+end
+
 function render_party_frame_config_tab()
     local show_party = state.settings.show_party == true;
     if (imgui.Checkbox('Show Party Frame##ashitaframes_show_party', { show_party })) then
@@ -3015,6 +3101,10 @@ function render_frame_config_tabs()
     if (imgui.BeginTabBar('##ashitaframes_config_tabs', ImGuiTabBarFlags_NoCloseWithMiddleMouseButton)) then
         if (imgui.BeginTabItem('General##ashitaframes_config_general', nil)) then
             render_general_config_tab();
+            imgui.EndTabItem();
+        end
+        if (imgui.BeginTabItem('Self##ashitaframes_config_self', nil)) then
+            render_self_frame_config_tab();
             imgui.EndTabItem();
         end
         if (imgui.BeginTabItem('Party##ashitaframes_config_party', nil)) then
@@ -3225,6 +3315,7 @@ local function render_config_window()
 
         imgui.Separator();
         local party_layout = party_layout_for_size(state.settings.party_preview_size);
+        imgui.Text(('Self pos: %d, %d'):fmt(state.self_window_x, state.self_window_y));
         imgui.Text(('Party %d pos: %d, %d'):fmt(party_size(state.settings.party_preview_size), party_layout.x, party_layout.y));
         imgui.Text(('Pet pos: %d, %d'):fmt(state.pet_window_x, state.pet_window_y));
         imgui.Text(('Target pos: %d, %d'):fmt(state.target_window_x, state.target_window_y));
@@ -3295,9 +3386,10 @@ local function print_status()
     local status_party_size = party_size(state.settings.party_preview_size);
     local status_party_layout = party_layout_for_size(status_party_size);
 
-    log_info(('visible=%s locked=%s target=%s party=%s pet=%s alliance=%s buffs=%s reminders=%s targetDebuffs=%s targetDebuffReminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d partySize=%d party=(%d,%d %dx%d gap=%d op=%d) pet=(%d,%d %dx%d gap=%d op=%d) target=(%d,%d %dx%d gap=%d op=%d)'):fmt(
+    log_info(('visible=%s locked=%s self=%s target=%s party=%s pet=%s alliance=%s buffs=%s reminders=%s targetDebuffs=%s targetDebuffReminders=%s reminderJob=%s reminderProfile=%s observed=%s observedEvents=%d observedLogEvents=%d maxBuffs=%d self=(%d,%d %dx%d gap=%d op=%d) partySize=%d party=(%d,%d %dx%d gap=%d op=%d) pet=(%d,%d %dx%d gap=%d op=%d) target=(%d,%d %dx%d gap=%d op=%d)'):fmt(
         tostring(state.visible[1] == true),
         tostring(state.settings.locked == true),
+        tostring(state.settings.show_self == true),
         tostring(state.settings.show_target == true),
         tostring(state.settings.show_party == true),
         tostring(state.settings.show_pet == true),
@@ -3312,6 +3404,12 @@ local function print_status()
         state.observed_text_events,
         state.observed_log_events,
         state.settings.max_buffs,
+        state.self_window_x,
+        state.self_window_y,
+        state.settings.self_frame_width,
+        state.settings.self_row_height,
+        state.settings.self_row_gap,
+        state.settings.self_opacity,
         status_party_size,
         status_party_layout.x,
         status_party_layout.y,
@@ -4116,6 +4214,7 @@ ashita.events.register('d3d_present', 'present_cb', function ()
     end
 
     render_target();
+    render_self();
     render_pet();
     render_party();
     render_config_window();
