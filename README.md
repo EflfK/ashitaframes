@@ -17,8 +17,8 @@ clean while important unit information remains visible elsewhere on screen.
   zoning are hidden once they are no longer in your current zone.
 - Draws a draggable pet frame when your local player has an active pet, using
   the pet entity for name/HP/distance and Ashita pet state for MP and TP.
-- Shows HP, MP, TP, job/subjob, level, and same-zone dimming where Ashita
-  exposes that data.
+- Shows HP as the row background fill, with MP, TP, job/subjob, level, and
+  same-zone dimming where Ashita exposes that data.
 - Shows configurable cast bars on self, party, pet, and target frames. The
   local player uses Ashita cast-bar memory; other units use observed cast
   starts with resource cast-time estimates.
@@ -123,9 +123,10 @@ persisted on/off toggle (`show_self`, `show_party`, `show_pet`, or
 reminders. The Target tab includes Dia, Paralyze, and Slow reminders.
 Use Save to write the current window layout and reminder settings to
 `ashitaframes_config.lua`. Self, Party, Pet, and Target frame width, height,
-row gap, opacity, MP bar, TP bar, cast bar, and MP/TP/cast text thresholds are configured
-independently. HP text shows percent plus current/max when that data is
-available. Width controls allow frames up to 750 pixels wide. Party frame layout
+row gap, opacity, MP bar, TP bar, cast bar, and MP/TP/cast text thresholds are
+configured independently. HP text shows percent plus current/max when that data is
+available, and the HP bar fills the row background behind the frame's other
+information. Width controls allow frames up to 750 pixels wide. Party frame layout
 is also configured separately for total party sizes 1 through 6, including
 columns and rows for stacking party members into grids; while the configuration
 window is open, the party frame fills missing non-self rows with preview members

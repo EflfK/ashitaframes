@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.27';
+addon.version   = '0.3.28';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -3137,6 +3137,20 @@ local function draw_bar(draw_list, x, y, width, height, percent, fill_color, alp
     draw_bar_fill(draw_list, x, y, width, height, percent, fill_color, alpha, 2.0);
 end
 
+local function draw_hp_background(draw_list, x, y, width, height, percent, fill_color, alpha)
+    percent = percent_value(percent);
+    if (percent == nil or percent <= 0) then
+        return;
+    end
+
+    local fill_width = math.floor(width * (percent / 100));
+    if (fill_width <= 0) then
+        return;
+    end
+
+    draw_list:AddRectFilled({ x, y }, { x + fill_width, y + height }, color_u32(apply_alpha(fill_color, alpha * 0.78)), 4.0);
+end
+
 function tp_percent_value(tp)
     local numeric = tonumber(tp);
     if (numeric == nil) then
@@ -3407,9 +3421,7 @@ function draw_resource_labels(draw_list, unit, layout, x, y, width, alpha)
     end
 end
 
-function draw_resource_bars(draw_list, unit, layout, x, y, width, height, hp_color, alpha)
-    draw_bar(draw_list, x, y, width, height, unit.hp_pct, hp_color, alpha);
-
+function draw_resource_bars(draw_list, unit, layout, x, y, width, height, alpha)
     if (layout.show_cast == true and unit_has_cast(unit)) then
         local cast_h = math.min(4, height);
         draw_list:AddRectFilled({ x, y }, { x + width, y + cast_h }, color_u32(apply_alpha(COLORS.bar_empty, alpha * 0.82)), 1.0);
@@ -3451,6 +3463,7 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
     local text_color = unit.dim and COLORS.text_dim or COLORS.text;
 
     draw_list:AddRectFilled({ x, y }, { x + width, y + row_height }, color_u32(apply_alpha(row_bg, alpha)), 4.0);
+    draw_hp_background(draw_list, x, y, width, row_height, unit.hp_pct, hp_color, alpha);
     draw_list:AddRect({ x, y }, { x + width, y + row_height }, color_u32(apply_alpha(border, alpha)), 4.0, ImDrawCornerFlags_All, 1.0);
 
     draw_text(draw_list, x + 8, y + 5, COLORS.accent, unit.tag or '');
@@ -3463,7 +3476,7 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
     draw_buff_icon_row(unit, x, y, width, alpha);
     draw_target_debuff_icon_row(unit, x, y, width, alpha);
 
-    draw_resource_bars(draw_list, unit, layout, bar_x, bar_y, bar_w, bar_h, hp_color, alpha);
+    draw_resource_bars(draw_list, unit, layout, bar_x, bar_y, bar_w, bar_h, alpha);
     draw_resource_labels(draw_list, unit, layout, bar_x, label_y, bar_w, alpha);
 
     if (skip_spacing ~= true) then
