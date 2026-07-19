@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.3';
+addon.version   = '0.3.4';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -949,7 +949,7 @@ local function current_player_job_key(party)
     return #job > 0 and job or 'default';
 end
 
-local function party_member_category(index, target_index)
+local function party_member_category(index, target_index, server_id)
     if (index == 0) then
         return 'self';
     end
@@ -961,6 +961,13 @@ local function party_member_category(index, target_index)
         if (entity_type == 8 or (trust_owner ~= nil and trust_owner ~= 0)) then
             return 'trust';
         end
+    end
+
+    -- Trust server ids are zone entity ids, unlike player ids. When zoning,
+    -- Ashita can retain those stale trust ids even after the actors despawn.
+    server_id = tonumber(server_id) or 0;
+    if (server_id >= 0x01000000) then
+        return 'trust';
     end
 
     return 'player';
@@ -1173,13 +1180,18 @@ local function party_member_unit(party, index, self_zone, reminder_job)
     local zone_id = safe_read(function () return party:GetMemberZone(index); end, nil);
     local same_zone = self_zone == nil or zone_id == nil or zone_id == self_zone;
     local tag = index == 0 and 'YOU' or tostring(index + 1);
+    local category = party_member_category(index, target_index, server_id);
+
+    if (category == 'trust' and same_zone == false) then
+        return nil;
+    end
 
     return {
         kind = 'party',
         tag = tag,
         index = index,
         name = #name > 0 and name or ('Slot %d'):fmt(index + 1),
-        category = party_member_category(index, target_index),
+        category = category,
         reminder_job = reminder_job,
         hp_pct = safe_read(function () return party:GetMemberHPPercent(index); end, nil),
         mp_pct = safe_read(function () return party:GetMemberMPPercent(index); end, nil),

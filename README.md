@@ -12,7 +12,8 @@ clean while important unit information remains visible elsewhere on screen.
 - Draws a draggable target frame with name, HP percent, and distance when
   available.
 - Draws draggable party frames for the first party by default, with optional
-  alliance slots.
+  alliance slots. Trust slots that linger in Ashita memory after zoning are
+  hidden once they are no longer in your current zone.
 - Shows HP, MP, TP, job/subjob, level, and same-zone dimming where Ashita
   exposes that data.
 - Shows compact party status icons for mapped buffs when Ashita exposes them
