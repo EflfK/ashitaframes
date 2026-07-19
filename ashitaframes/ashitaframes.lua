@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.10';
+addon.version   = '0.3.11';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -57,9 +57,14 @@ local DEFAULT_SETTINGS = {
     show_percent = true,
     show_tp = true,
     show_buffs = true,
+    show_buff_timers = true,
     show_buff_reminders = true,
     hide_buff_reminders_in_towns = true,
     buff_reminder_suppressed_zone_ids = { },
+    buff_timer_duration_seconds = {
+        protect = 1800,
+        shell = 1800,
+    },
     max_buffs = 8,
     party_window_x = 36,
     party_window_y = 362,
@@ -109,6 +114,8 @@ local COLORS = {
     buff_missing_bg = { 0.70, 0.05, 0.03, 0.76 },
     buff_missing_border = { 1.00, 0.10, 0.05, 1.00 },
     buff_missing_flash = { 1.00, 0.94, 0.18, 1.00 },
+    buff_timer_bg = { 0.00, 0.00, 0.00, 0.70 },
+    buff_timer_text = { 1.00, 1.00, 1.00, 0.96 },
 };
 
 local BUFF_ICON_SIZE = 54;
@@ -118,9 +125,14 @@ local BUFF_ICON_FILES = {
     shell = 'shell_1.png',
 };
 local BUFF_DEFINITIONS = {
-    protect = { id = 40, label = 'Protect', spell = 'Protect', file = BUFF_ICON_FILES.protect },
-    shell = { id = 41, label = 'Shell', spell = 'Shell', file = BUFF_ICON_FILES.shell },
+    protect = { id = 40, label = 'Protect', spell = 'Protect', file = BUFF_ICON_FILES.protect, duration_seconds = 1800 },
+    shell = { id = 41, label = 'Shell', spell = 'Shell', file = BUFF_ICON_FILES.shell, duration_seconds = 1800 },
 };
+local STATUS_TIMER_INFINITE = 0x7FFFFFFF;
+local STATUS_TIMER_WRAP = 0xFFFFFFFF;
+local STATUS_TIMER_MIN_SIGNED = -2147483648;
+local STATUS_TIMER_VANA_BASE_UTC = 0x3C307D70;
+local STATUS_TIMER_REAL_UTC_PATTERN = '8B0D????????8B410C8B49108D04808D04808D04808D04C1C3';
 local BUFF_REMINDER_PROFILE_DEFAULT = {
     enabled = true,
     self = true,
@@ -191,7 +203,10 @@ local state = {
     observed_log_path = nil,
     observed_log_position = 0,
     observed_log_last_check = 0,
+    observed_log_last_timestamp = nil,
     observed_log_events = 0,
+    real_utcstamp_pointer = 0,
+    real_utcstamp_pointer_searched = false,
     party_window_x = 36,
     party_window_y = 362,
     target_window_x = 36,
@@ -433,6 +448,21 @@ local function normalize_zone_id_list(source)
     return result;
 end
 
+local function normalize_buff_timer_durations(source)
+    local result = { };
+
+    for key, definition in pairs(BUFF_DEFINITIONS) do
+        local value = type(source) == 'table' and tonumber(source[key]) or nil;
+        if (value == nil) then
+            value = tonumber(definition.duration_seconds) or 1800;
+        end
+
+        result[key] = clamp_int(value, 1, 86400);
+    end
+
+    return result;
+end
+
 local function overlay_settings(target, source)
     if (type(source) ~= 'table') then
         return target;
@@ -459,6 +489,7 @@ local function normalize_settings(settings)
     settings.show_percent = settings.show_percent ~= false;
     settings.show_tp = settings.show_tp ~= false;
     settings.show_buffs = settings.show_buffs ~= false;
+    settings.show_buff_timers = settings.show_buff_timers ~= false;
     settings.show_buff_reminders = settings.show_buff_reminders ~= false;
     settings.hide_buff_reminders_in_towns = settings.hide_buff_reminders_in_towns ~= false;
 
@@ -473,6 +504,7 @@ local function normalize_settings(settings)
     settings.opacity = clamp_int(settings.opacity, LIMITS.opacity_min, LIMITS.opacity_max);
     settings.buff_reminders = normalize_buff_reminders(settings.buff_reminders);
     settings.buff_reminder_suppressed_zone_ids = normalize_zone_id_list(settings.buff_reminder_suppressed_zone_ids);
+    settings.buff_timer_duration_seconds = normalize_buff_timer_durations(settings.buff_timer_duration_seconds);
 
     return settings;
 end
@@ -572,6 +604,62 @@ local function append_buff_id(result, seen, value)
     table.insert(result, buff_id);
 end
 
+local function ensure_real_utcstamp_pointer()
+    if (state.real_utcstamp_pointer_searched == true) then
+        return tonumber(state.real_utcstamp_pointer) or 0;
+    end
+
+    state.real_utcstamp_pointer_searched = true;
+    state.real_utcstamp_pointer = safe_read(function ()
+        return ashita.memory.find('FFXiMain.dll', 0, STATUS_TIMER_REAL_UTC_PATTERN, 2, 0);
+    end, 0) or 0;
+
+    return state.real_utcstamp_pointer;
+end
+
+local function status_timer_utcstamp()
+    local pointer = ensure_real_utcstamp_pointer();
+    if (pointer == nil or pointer == 0) then
+        return nil;
+    end
+
+    pointer = safe_read(function () return ashita.memory.read_uint32(pointer); end, 0);
+    if (pointer == nil or pointer == 0) then
+        return nil;
+    end
+
+    pointer = safe_read(function () return ashita.memory.read_uint32(pointer); end, 0);
+    if (pointer == nil or pointer == 0) then
+        return nil;
+    end
+
+    return safe_read(function () return ashita.memory.read_uint32(pointer + 0x0C); end, nil);
+end
+
+local function seconds_from_status_timer(raw_timer)
+    raw_timer = tonumber(raw_timer);
+    if (raw_timer == nil or raw_timer <= 0 or raw_timer == STATUS_TIMER_INFINITE) then
+        return nil;
+    end
+
+    local utcstamp = tonumber(status_timer_utcstamp());
+    if (utcstamp == nil) then
+        return nil;
+    end
+
+    local comparand = (utcstamp - STATUS_TIMER_VANA_BASE_UTC) * 60;
+    local remaining = raw_timer - comparand;
+    while (remaining < STATUS_TIMER_MIN_SIGNED) do
+        remaining = remaining + STATUS_TIMER_WRAP;
+    end
+
+    if (remaining <= 0) then
+        return 0;
+    end
+
+    return math.ceil(remaining / 60);
+end
+
 local function player_buffs()
     local player = safe_read(function () return AshitaCore:GetMemoryManager():GetPlayer(); end, nil);
     local icons = player ~= nil and safe_read(function () return player:GetStatusIcons(); end, nil) or nil;
@@ -589,6 +677,56 @@ local function player_buffs()
         end
 
         append_buff_id(result, seen, buff_id);
+    end
+
+    return result;
+end
+
+local function player_buff_timers()
+    local player = safe_read(function () return AshitaCore:GetMemoryManager():GetPlayer(); end, nil);
+    local icons = player ~= nil and safe_read(function () return player:GetStatusIcons(); end, nil) or nil;
+    local timers = player ~= nil and safe_read(function () return player:GetStatusTimers(); end, nil) or nil;
+    local result = { };
+
+    if (icons == nil or timers == nil) then
+        return result;
+    end
+
+    for index = 1, 32, 1 do
+        local buff_id = safe_read(function () return icons[index]; end, nil);
+        if (buff_id == 255) then
+            break;
+        end
+
+        local normalized_buff_id = tonumber(buff_id);
+        if (normalized_buff_id ~= nil and normalized_buff_id > 0 and normalized_buff_id ~= 255 and normalized_buff_id <= 0x3FF) then
+            local seconds = seconds_from_status_timer(safe_read(function () return timers[index]; end, nil));
+            if (seconds ~= nil and seconds > 0) then
+                result[normalized_buff_id] = seconds;
+            end
+        end
+    end
+
+    return result;
+end
+
+local function merge_buff_timers(primary, secondary)
+    local result = { };
+
+    if (type(secondary) == 'table') then
+        for key, value in pairs(secondary) do
+            if (tonumber(value) ~= nil and tonumber(value) > 0) then
+                result[key] = value;
+            end
+        end
+    end
+
+    if (type(primary) == 'table') then
+        for key, value in pairs(primary) do
+            if (tonumber(value) ~= nil and tonumber(value) > 0) then
+                result[key] = value;
+            end
+        end
     end
 
     return result;
@@ -710,8 +848,38 @@ local function observed_buffs_for_name(name)
     end
 
     for key, enabled in pairs(entry) do
-        if (enabled == true) then
+        if (enabled == true or (type(enabled) == 'table' and (enabled.expires_at == nil or enabled.expires_at > os.time()))) then
             append_buff_id(result, seen, buff_id_for_key(key));
+        elseif (type(enabled) == 'table' and enabled.expires_at ~= nil and enabled.expires_at <= os.time()) then
+            entry[key] = nil;
+        end
+    end
+
+    return result;
+end
+
+local function observed_timer_seconds_for_name(name)
+    local name_key = observed_name_key(name);
+    local entry = name_key ~= nil and state.observed_buffs[name_key] or nil;
+    local result = { };
+
+    if (type(entry) ~= 'table') then
+        return result;
+    end
+
+    local now = os.time();
+    for key, value in pairs(entry) do
+        if (type(value) == 'table' and value.expires_at ~= nil) then
+            local remaining = math.floor((tonumber(value.expires_at) or 0) - now + 0.5);
+            if (remaining > 0) then
+                local buff_id = buff_id_for_key(key);
+                if (buff_id ~= nil) then
+                    result[buff_id] = remaining;
+                    result[key] = remaining;
+                end
+            else
+                entry[key] = nil;
+            end
         end
     end
 
@@ -782,6 +950,19 @@ local function party_member_buffs(party, index, server_id, same_zone, name)
     end
 
     return merge_buff_lists(party_status_buffs(index, server_id), observed);
+end
+
+local function party_member_buff_timers(index, same_zone, name)
+    if (not state.settings.show_buffs or index > 5 or same_zone == false) then
+        return { };
+    end
+
+    local observed = observed_timer_seconds_for_name(name);
+    if (index == 0) then
+        return merge_buff_timers(player_buff_timers(), observed);
+    end
+
+    return observed;
 end
 
 local function buff_name(buff_id)
@@ -1053,6 +1234,23 @@ local function reminder_buff_keys(unit)
     return result;
 end
 
+local function buff_timer_text(seconds)
+    seconds = tonumber(seconds);
+    if (seconds == nil or seconds <= 0) then
+        return '';
+    end
+
+    seconds = math.floor(seconds + 0.5);
+    if (seconds >= 3600) then
+        return ('%dh'):fmt(math.floor((seconds + 1800) / 3600));
+    end
+    if (seconds >= 60) then
+        return ('%dm'):fmt(math.floor((seconds + 30) / 60));
+    end
+
+    return ('%ds'):fmt(seconds);
+end
+
 local function buff_icon_items(unit)
     local items = { };
     if (type(unit.buffs) ~= 'table') then
@@ -1061,6 +1259,7 @@ local function buff_icon_items(unit)
 
     local max_buffs = state.settings.max_buffs or DEFAULT_SETTINGS.max_buffs;
     local active_keys = active_buff_key_lookup(unit.buffs);
+    local timers = type(unit.buff_timers) == 'table' and unit.buff_timers or { };
 
     for index = 1, #unit.buffs, 1 do
         if (#items >= max_buffs) then
@@ -1078,6 +1277,7 @@ local function buff_icon_items(unit)
                 name = buff_name(buff_id),
                 handle = icon.handle,
                 state = 'active',
+                timer_seconds = timers[buff_id] or (key ~= nil and timers[key] or nil),
             });
         end
     end
@@ -1311,6 +1511,17 @@ local function zone_id_list_text(zone_ids)
     return ('{ %s }'):fmt(table.concat(pieces, ', '));
 end
 
+local function buff_timer_duration_text(durations)
+    local normalized = normalize_buff_timer_durations(durations);
+    local pieces = { };
+
+    for _, key in ipairs({ 'protect', 'shell' }) do
+        table.insert(pieces, ('%s = %d'):fmt(key, normalized[key]));
+    end
+
+    return ('{ %s }'):fmt(table.concat(pieces, ', '));
+end
+
 local function config_key_text(key)
     if (key == 'default' or key:match('^%a[%w_]*$') ~= nil) then
         return key;
@@ -1365,6 +1576,7 @@ local function capture_runtime_settings_for_save()
     state.settings.target_window_y = state.target_window_y;
     state.settings.buff_reminders = normalize_buff_reminders(state.settings.buff_reminders);
     state.settings.buff_reminder_suppressed_zone_ids = normalize_zone_id_list(state.settings.buff_reminder_suppressed_zone_ids);
+    state.settings.buff_timer_duration_seconds = normalize_buff_timer_durations(state.settings.buff_timer_duration_seconds);
 
     return normalize_settings(state.settings);
 end
@@ -1387,9 +1599,11 @@ local function config_text_from_settings(settings)
         ('        show_percent = %s,'):fmt(bool_text(settings.show_percent)),
         ('        show_tp = %s,'):fmt(bool_text(settings.show_tp)),
         ('        show_buffs = %s,'):fmt(bool_text(settings.show_buffs)),
+        ('        show_buff_timers = %s,'):fmt(bool_text(settings.show_buff_timers)),
         ('        show_buff_reminders = %s,'):fmt(bool_text(settings.show_buff_reminders)),
         ('        hide_buff_reminders_in_towns = %s,'):fmt(bool_text(settings.hide_buff_reminders_in_towns)),
         ('        buff_reminder_suppressed_zone_ids = %s,'):fmt(zone_id_list_text(settings.buff_reminder_suppressed_zone_ids)),
+        ('        buff_timer_duration_seconds = %s,'):fmt(buff_timer_duration_text(settings.buff_timer_duration_seconds)),
         ('        max_buffs = %d,'):fmt(settings.max_buffs),
         '',
         ('        party_window_x = %d,'):fmt(state.party_window_x),
@@ -1469,6 +1683,7 @@ local function party_member_unit(party, index, self_zone, reminder_job, reminder
             safe_read(function () return party:GetMemberSubJob(index); end, nil),
             safe_read(function () return party:GetMemberSubJobLevel(index); end, nil)),
         buffs = party_member_buffs(party, index, server_id, same_zone, name),
+        buff_timers = party_member_buff_timers(index, same_zone, name),
         same_zone = same_zone,
         dim = state.settings.same_zone_dim and not same_zone,
     };
@@ -1655,6 +1870,21 @@ local function draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint
     imgui.SetCursorScreenPos({ icon_x, icon_y });
     imgui.Image(item.handle, { BUFF_ICON_SIZE, BUFF_ICON_SIZE }, { 0, 0 }, { 1, 1 }, tint, { 0, 0, 0, 0 });
 
+    local timer_text = state.settings.show_buff_timers and item.state == 'active' and buff_timer_text(item.timer_seconds) or '';
+    if (#timer_text > 0) then
+        local strip_h = 15;
+        local strip_y = icon_y + BUFF_ICON_SIZE - strip_h;
+        draw_list:AddRectFilled(
+            { icon_x, strip_y },
+            { icon_x + BUFF_ICON_SIZE, icon_y + BUFF_ICON_SIZE },
+            color_u32(apply_alpha(COLORS.buff_timer_bg, alpha)),
+            2.0);
+
+        local text_width = calc_text_width(timer_text);
+        local text_x = icon_x + math.max(2, math.floor((BUFF_ICON_SIZE - text_width) / 2));
+        draw_text(draw_list, text_x, strip_y + 1, apply_alpha(COLORS.buff_timer_text, alpha), timer_text);
+    end
+
     if (item.state == 'missing') then
         local mark_color = color_u32(apply_alpha(COLORS.buff_missing_border, alpha));
         draw_list:AddLine({ icon_x + 7, icon_y + 7 }, { icon_x + BUFF_ICON_SIZE - 7, icon_y + BUFF_ICON_SIZE - 7 }, mark_color, 3.0);
@@ -1690,6 +1920,10 @@ local function draw_buff_icon_row(unit, x, y, width, alpha)
                 imgui.TextColored(COLORS.warning, ('Missing: %s'):fmt(item.name));
             else
                 imgui.Text(item.name);
+                local timer_text = buff_timer_text(item.timer_seconds);
+                if (#timer_text > 0) then
+                    imgui.TextColored(COLORS.text_muted, ('Time: %s'):fmt(timer_text));
+                end
             end
             imgui.EndTooltip();
         end
@@ -1869,6 +2103,22 @@ local function render_profile_buff_toggle(profile, key, label)
     return true;
 end
 
+local function render_buff_timer_duration_control(key, label)
+    key = normalize_buff_key(key);
+    if (key == nil) then
+        return;
+    end
+
+    state.settings.buff_timer_duration_seconds = normalize_buff_timer_durations(state.settings.buff_timer_duration_seconds);
+    local seconds = state.settings.buff_timer_duration_seconds[key] or buff_timer_duration_seconds(key);
+    local minutes = math.max(1, math.floor((seconds + 30) / 60));
+
+    render_int_control(('%s Timer'):fmt(label), ('buff_timer_%s'):fmt(key), minutes, 1, 180, function (value)
+        state.settings.buff_timer_duration_seconds[key] = clamp_int(value, 1, 180) * 60;
+        mark_config_changed();
+    end, 'min');
+end
+
 local function render_buff_reminder_config()
     imgui.Separator();
     imgui.TextColored(COLORS.accent, 'Buff Reminders');
@@ -1952,6 +2202,10 @@ local function render_buff_reminder_config()
     elseif (buff_list_has(profile.buffs, 'shell') and not reminder_spell_available('shell')) then
         imgui.TextColored(COLORS.text_muted, 'Shell is configured on but unavailable on current job/subjob.');
     end
+
+    imgui.TextColored(COLORS.text_muted, 'Observed Timer Defaults');
+    render_buff_timer_duration_control('protect', 'Protect');
+    render_buff_timer_duration_control('shell', 'Shell');
 end
 
 local function render_config_window()
@@ -2004,6 +2258,12 @@ local function render_config_window()
         if (imgui.Checkbox('Party Buffs##ashitaframes_show_buffs', { show_buffs })) then
             state.settings.show_buffs = not show_buffs;
             state.settings = normalize_settings(state.settings);
+            mark_config_changed();
+        end
+
+        local show_buff_timers = state.settings.show_buff_timers == true;
+        if (imgui.Checkbox('Buff Timers##ashitaframes_show_buff_timers', { show_buff_timers })) then
+            state.settings.show_buff_timers = not show_buff_timers;
             mark_config_changed();
         end
 
@@ -2082,7 +2342,7 @@ local function observed_buff_summary()
         local buff_names = { };
         if (type(buffs) == 'table') then
             for key, enabled in pairs(buffs) do
-                if (enabled == true) then
+                if (enabled == true or type(enabled) == 'table') then
                     table.insert(buff_names, key);
                 end
             end
@@ -2182,7 +2442,47 @@ local function current_party_contains_name(name)
     return false;
 end
 
-local function set_observed_buff(name, key, enabled)
+local function buff_timer_duration_seconds(key)
+    key = normalize_buff_key(key);
+    if (key == nil) then
+        return 0;
+    end
+
+    local durations = state.settings.buff_timer_duration_seconds;
+    local value = type(durations) == 'table' and tonumber(durations[key]) or nil;
+    if (value == nil) then
+        local definition = BUFF_DEFINITIONS[key];
+        value = definition ~= nil and tonumber(definition.duration_seconds) or nil;
+    end
+
+    return clamp_int(value or 1800, 1, 86400);
+end
+
+local function explicit_event_timestamp(message)
+    local hour, minute, second = tostring(message or ''):match('^%[(%d%d):(%d%d):(%d%d)%]');
+    if (hour == nil) then
+        return nil;
+    end
+
+    local now = os.time();
+    local parts = os.date('*t', now);
+    parts.hour = tonumber(hour) or parts.hour;
+    parts.min = tonumber(minute) or parts.min;
+    parts.sec = tonumber(second) or parts.sec;
+
+    local timestamp = os.time(parts);
+    if (timestamp > (now + 60)) then
+        timestamp = timestamp - 86400;
+    end
+
+    return timestamp;
+end
+
+local function event_timestamp(message, fallback)
+    return explicit_event_timestamp(message) or tonumber(fallback) or os.time();
+end
+
+local function set_observed_buff(name, key, enabled, observed_at)
     local name_key = observed_name_key(name);
     key = normalize_buff_key(key);
     if (name_key == nil or key == nil or buff_id_for_key(key) == nil or not current_party_contains_name(name)) then
@@ -2190,8 +2490,13 @@ local function set_observed_buff(name, key, enabled)
     end
 
     if (enabled == true) then
+        local timestamp = tonumber(observed_at) or os.time();
+        local duration = buff_timer_duration_seconds(key);
         state.observed_buffs[name_key] = state.observed_buffs[name_key] or { };
-        state.observed_buffs[name_key][key] = true;
+        state.observed_buffs[name_key][key] = {
+            expires_at = timestamp + duration,
+            duration = duration,
+        };
         return true;
     end
 
@@ -2230,14 +2535,14 @@ local function observed_buff_event(text)
     return nil, nil, nil;
 end
 
-local function process_observed_buff_text(message)
+local function process_observed_buff_text(message, fallback_timestamp)
     local name, buff, enabled = observed_buff_event(clean_event_message(message));
     local key = buff_key_from_name(buff);
     if (name == nil or key == nil) then
         return false;
     end
 
-    return set_observed_buff(name, key, enabled);
+    return set_observed_buff(name, key, enabled, event_timestamp(message, fallback_timestamp));
 end
 
 local function current_chat_log_path()
@@ -2285,12 +2590,19 @@ local function seed_observed_buffs_from_chat_log()
         end
     end
 
+    local last_timestamp = nil;
     for index = start_index, #lines, 1 do
-        process_observed_buff_text(lines[index]);
+        local explicit_timestamp = explicit_event_timestamp(lines[index]);
+        if (explicit_timestamp ~= nil) then
+            last_timestamp = explicit_timestamp;
+        end
+
+        process_observed_buff_text(lines[index], last_timestamp);
     end
 
     state.observed_log_path = path;
     state.observed_log_position = position;
+    state.observed_log_last_timestamp = last_timestamp;
 end
 
 local function poll_observed_buffs_from_chat_log()
@@ -2326,13 +2638,20 @@ local function poll_observed_buffs_from_chat_log()
     end
 
     file:seek('set', position);
+    local last_timestamp = state.observed_log_last_timestamp;
     for line in file:lines() do
-        if (process_observed_buff_text(line)) then
+        local explicit_timestamp = explicit_event_timestamp(line);
+        if (explicit_timestamp ~= nil) then
+            last_timestamp = explicit_timestamp;
+        end
+
+        if (process_observed_buff_text(line, last_timestamp)) then
             state.observed_log_events = state.observed_log_events + 1;
         end
     end
 
     state.observed_log_position = file:seek() or size;
+    state.observed_log_last_timestamp = last_timestamp;
     file:close();
 end
 
@@ -2421,6 +2740,7 @@ end
 
 ashita.events.register('load', 'load_cb', function ()
     load_config();
+    ensure_real_utcstamp_pointer();
     seed_observed_buffs_from_chat_log();
     log_info('Loaded. Use /ashitaframes config to position frames.');
 end);
