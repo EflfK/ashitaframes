@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.12';
+addon.version   = '0.3.13';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -90,7 +90,7 @@ local DEFAULT_SETTINGS = {
     target_debuff_reminders = {
         default = {
             enabled = true,
-            debuffs = { 'dia', 'paralyze' },
+            debuffs = { 'dia', 'paralyze', 'slow' },
         },
     },
 };
@@ -144,6 +144,13 @@ local TARGET_DEBUFF_DEFINITIONS = {
         spell_ids = { 58, 80 },
         duration_seconds = 120,
     },
+    slow = {
+        id = 13,
+        label = 'Slow',
+        spell = 'Slow',
+        spell_ids = { 56, 79 },
+        duration_seconds = 180,
+    },
 };
 local TARGET_DEBUFF_SPELL_IDS = {
     [23] = 'dia',
@@ -154,14 +161,17 @@ local TARGET_DEBUFF_SPELL_IDS = {
     [33] = 'dia',
     [58] = 'paralyze',
     [80] = 'paralyze',
+    [56] = 'slow',
+    [79] = 'slow',
 };
 local TARGET_DEBUFF_STATUS_IDS = {
     [4] = 'paralyze',
+    [13] = 'slow',
     [134] = 'dia',
 };
 local TARGET_DEBUFF_REMINDER_PROFILE_DEFAULT = {
     enabled = true,
-    debuffs = { 'dia', 'paralyze' },
+    debuffs = { 'dia', 'paralyze', 'slow' },
 };
 local BUFF_REMINDER_PROFILE_DEFAULT = {
     enabled = true,
@@ -329,6 +339,9 @@ local function normalize_target_debuff_key(value)
     end
     if (key == 'paralyze' or key == 'paralysis' or key == 'paralyze_1') then
         return 'paralyze';
+    end
+    if (key == 'slow' or key == 'slow_1' or key == 'slow_i' or key == 'slow_2' or key == 'slow_ii' or key == 'slowii') then
+        return 'slow';
     end
 
     return TARGET_DEBUFF_DEFINITIONS[key] ~= nil and key or nil;
@@ -2588,6 +2601,9 @@ local function render_target_debuff_reminder_config()
     if (render_profile_target_debuff_toggle(profile, 'paralyze', 'Paralyze')) then
         any_debuff = true;
     end
+    if (render_profile_target_debuff_toggle(profile, 'slow', 'Slow')) then
+        any_debuff = true;
+    end
 
     if (not any_debuff) then
         imgui.TextColored(COLORS.text_muted, 'No supported target debuffs available for current job/subjob.');
@@ -2597,6 +2613,9 @@ local function render_target_debuff_reminder_config()
         end
         if (target_debuff_list_has(profile.debuffs, 'paralyze') and not target_debuff_spell_available('paralyze')) then
             imgui.TextColored(COLORS.text_muted, 'Paralyze is configured on but unavailable on current job/subjob.');
+        end
+        if (target_debuff_list_has(profile.debuffs, 'slow') and not target_debuff_spell_available('slow')) then
+            imgui.TextColored(COLORS.text_muted, 'Slow is configured on but unavailable on current job/subjob.');
         end
     end
 end

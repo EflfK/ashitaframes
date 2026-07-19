@@ -113,7 +113,7 @@ Open the in-game configuration window:
 The Buff Reminders section lets you pick a main-job profile, enable reminders
 for that job, choose self/player/trust targets, and toggle Protect or Shell.
 The Target Debuff Reminders section lets you pick a main-job profile and toggle
-Dia or Paralyze reminders for the target frame.
+Dia, Paralyze, or Slow reminders for the target frame.
 Use Save to write the current window layout and reminder settings to
 `ashitaframes_config.lua`. Reminder options are filtered to spells your current
 main/sub job can actually cast and that your character has learned. Missing
@@ -181,7 +181,7 @@ return {
         target_debuff_reminders = {
             default = {
                 enabled = true,
-                debuffs = { 'dia', 'paralyze' },
+                debuffs = { 'dia', 'paralyze', 'slow' },
             },
         },
     },
@@ -199,10 +199,10 @@ zones. Add zone ids to `buff_reminder_suppressed_zone_ids` to hide missing
 reminders in additional zones.
 
 `target_debuff_reminders` is keyed by your current main job. Supported target
-debuff reminder keys are currently `dia` and `paralyze`; configured reminders
-only display on attackable targets when the spell is learned, usable on your
-current main/sub job, and not on cooldown. Active target debuff icons are owned
-state observed from local player casts.
+debuff reminder keys are currently `dia`, `paralyze`, and `slow`; configured
+reminders only display on attackable targets when the spell is learned, usable
+on your current main/sub job, and not on cooldown. Active target debuff icons
+are owned state observed from local player casts.
 
 ## Development
 

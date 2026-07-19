@@ -51,7 +51,7 @@ return {
         target_debuff_reminders = {
             default = {
                 enabled = true,
-                debuffs = { 'dia', 'paralyze' },
+                debuffs = { 'dia', 'paralyze', 'slow' },
             },
         },
     },
