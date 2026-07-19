@@ -119,8 +119,10 @@ persisted on/off toggle (`show_self`, `show_party`, `show_pet`, or
 `show_target`) plus its layout controls. The Party tab includes Protect/Shell
 reminders. The Target tab includes Dia, Paralyze, and Slow reminders.
 Use Save to write the current window layout and reminder settings to
-`ashitaframes_config.lua`. Self, Party, Pet, and Target frame width, base row
-height, row gap, and opacity are configured independently. Party frame layout
+`ashitaframes_config.lua`. Self, Party, Pet, and Target frame width, height,
+row gap, opacity, MP bar, TP bar, and MP/TP text thresholds are configured
+independently. HP text shows percent plus current/max when that data is
+available. Party frame layout
 is also configured separately for total party sizes 1 through 6; while the
 configuration window is open, the party frame fills missing non-self rows with
 preview members for the selected size. Reminder options are filtered to spells
@@ -153,6 +155,7 @@ return {
         same_zone_dim = true,
         show_jobs = true,
         show_percent = true,
+        show_mp = true,
         show_tp = true,
         show_buffs = true,
         show_buff_reminders = true,
@@ -162,6 +165,8 @@ return {
         buff_reminder_suppressed_zone_ids = { },
         max_buffs = 8,
         party_preview_size = 6,
+        mp_text_threshold = 1,
+        tp_text_threshold = 1000,
         self_window_x = 36,
         self_window_y = 164,
         party_window_x = 36,
@@ -171,17 +176,28 @@ return {
         target_window_x = 36,
         target_window_y = 296,
         frame_width = 232,
+        height = 56,
         row_height = 56,
         row_gap = 5,
         opacity = 88,
         self_frame_width = 232,
+        self_height = 56,
         self_row_height = 56,
         self_row_gap = 5,
         self_opacity = 88,
+        self_show_mp = true,
+        self_show_tp = true,
+        self_mp_text_threshold = 1,
+        self_tp_text_threshold = 1000,
         party_frame_width = 232,
+        party_height = 56,
         party_row_height = 56,
         party_row_gap = 5,
         party_opacity = 88,
+        party_show_mp = true,
+        party_show_tp = true,
+        party_mp_text_threshold = 1,
+        party_tp_text_threshold = 1000,
         party_size_layouts = {
             [1] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
             [2] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
@@ -191,13 +207,23 @@ return {
             [6] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
         },
         pet_frame_width = 232,
+        pet_height = 56,
         pet_row_height = 56,
         pet_row_gap = 5,
         pet_opacity = 88,
+        pet_show_mp = true,
+        pet_show_tp = true,
+        pet_mp_text_threshold = 1,
+        pet_tp_text_threshold = 1000,
         target_frame_width = 232,
+        target_height = 56,
         target_row_height = 56,
         target_row_gap = 5,
         target_opacity = 88,
+        target_show_mp = false,
+        target_show_tp = false,
+        target_mp_text_threshold = 1,
+        target_tp_text_threshold = 1000,
 
         buff_reminders = {
             default = {
@@ -227,9 +253,10 @@ return {
 }
 ```
 
-The base `frame_width`, `row_height`, `row_gap`, and `opacity` keys are kept as
-fallbacks for older configs. New saves write separate `self_*`, `party_*`,
-`pet_*`, and `target_*` layout values; party frame saves also write the
+The base `frame_width`, `height`, `row_height`, `row_gap`, `opacity`,
+`show_mp`, `show_tp`, `mp_text_threshold`, and `tp_text_threshold` keys are kept
+as fallbacks for older configs. New saves write separate `self_*`, `party_*`,
+`pet_*`, and `target_*` layout and bar values; party frame saves also write the
 `party_size_layouts` table for size-specific positions and dimensions.
 
 `buff_reminders` is keyed by your current main job. Each profile can enable or
