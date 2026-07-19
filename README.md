@@ -17,8 +17,11 @@ clean while important unit information remains visible elsewhere on screen.
   zoning are hidden once they are no longer in your current zone.
 - Draws a draggable pet frame when your local player has an active pet, using
   the pet entity for name/HP/distance and Ashita pet state for MP and TP.
-- Shows HP, MP, TP, job/subjob, level, and same-zone dimming where Ashita
-  exposes that data.
+- Shows HP as the row background fill, with MP, TP, job/subjob, level, and
+  same-zone dimming where Ashita exposes that data.
+- Shows configurable cast bars on self, party, pet, and target frames. The
+  local player uses Ashita cast-bar memory; other units use observed cast
+  starts with resource cast-time estimates.
 - Shows compact party status icons for mapped buffs from Ashita status memory
   when available, plus observed party effect messages for trusts. Protect and
   Shell are mapped first.
@@ -119,15 +122,21 @@ persisted on/off toggle (`show_self`, `show_party`, `show_pet`, or
 `show_target`) plus its layout controls. The Party tab includes Protect/Shell
 reminders. The Target tab includes Dia, Paralyze, and Slow reminders.
 Use Save to write the current window layout and reminder settings to
-`ashitaframes_config.lua`. Self, Party, Pet, and Target frame width, base row
-height, row gap, and opacity are configured independently. Party frame layout
-is also configured separately for total party sizes 1 through 6; while the
-configuration window is open, the party frame fills missing non-self rows with
-preview members for the selected size. Reminder options are filtered to spells
+`ashitaframes_config.lua`. Self, Party, Pet, and Target frame width, height,
+row gap, opacity, MP bar, TP bar, cast bar, and MP/TP/cast text thresholds are
+configured independently. HP text shows percent plus current/max when that data is
+available, and the HP bar fills the row background behind the frame's other
+information. Width controls allow frames up to 750 pixels wide. Party frame layout
+is also configured separately for total party sizes 1 through 6, including
+columns and rows for stacking party members into grids; while the configuration
+window is open, the party frame fills missing non-self rows with preview members
+for the selected size. Reminder options are filtered to spells
 your current main/sub job can actually cast and that your character has learned. Missing
 target-debuff reminders are also hidden while the spell is on cooldown. Missing
 party-buff reminder flashes are hidden in towns by default; the config window
-can also suppress or allow the current non-town zone.
+can also suppress or allow the current non-town zone. Locked frames hide their
+title bars and window-shell backgrounds so only the individual frame rows are
+drawn; the configuration window keeps its normal container.
 
 Manual config is still supported:
 
@@ -153,7 +162,9 @@ return {
         same_zone_dim = true,
         show_jobs = true,
         show_percent = true,
+        show_mp = true,
         show_tp = true,
+        show_cast = true,
         show_buffs = true,
         show_buff_reminders = true,
         show_target_debuffs = true,
@@ -162,6 +173,9 @@ return {
         buff_reminder_suppressed_zone_ids = { },
         max_buffs = 8,
         party_preview_size = 6,
+        mp_text_threshold = 1,
+        tp_text_threshold = 1000,
+        cast_text_threshold = 1,
         self_window_x = 36,
         self_window_y = 164,
         party_window_x = 36,
@@ -171,33 +185,62 @@ return {
         target_window_x = 36,
         target_window_y = 296,
         frame_width = 232,
+        height = 56,
         row_height = 56,
         row_gap = 5,
         opacity = 88,
         self_frame_width = 232,
+        self_height = 56,
         self_row_height = 56,
         self_row_gap = 5,
         self_opacity = 88,
+        self_show_mp = true,
+        self_show_tp = true,
+        self_show_cast = true,
+        self_mp_text_threshold = 1,
+        self_tp_text_threshold = 1000,
+        self_cast_text_threshold = 1,
         party_frame_width = 232,
+        party_height = 56,
         party_row_height = 56,
         party_row_gap = 5,
         party_opacity = 88,
+        party_show_mp = true,
+        party_show_tp = true,
+        party_show_cast = true,
+        party_mp_text_threshold = 1,
+        party_tp_text_threshold = 1000,
+        party_cast_text_threshold = 1,
         party_size_layouts = {
-            [1] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
-            [2] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
-            [3] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
-            [4] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
-            [5] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
-            [6] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88 },
+            [1] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88, columns = 1, rows = 1 },
+            [2] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88, columns = 1, rows = 1 },
+            [3] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88, columns = 1, rows = 2 },
+            [4] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88, columns = 1, rows = 3 },
+            [5] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88, columns = 1, rows = 4 },
+            [6] = { x = 36, y = 362, frame_width = 232, row_height = 56, row_gap = 5, opacity = 88, columns = 1, rows = 5 },
         },
         pet_frame_width = 232,
+        pet_height = 56,
         pet_row_height = 56,
         pet_row_gap = 5,
         pet_opacity = 88,
+        pet_show_mp = true,
+        pet_show_tp = true,
+        pet_show_cast = true,
+        pet_mp_text_threshold = 1,
+        pet_tp_text_threshold = 1000,
+        pet_cast_text_threshold = 1,
         target_frame_width = 232,
+        target_height = 56,
         target_row_height = 56,
         target_row_gap = 5,
         target_opacity = 88,
+        target_show_mp = false,
+        target_show_tp = false,
+        target_show_cast = true,
+        target_mp_text_threshold = 1,
+        target_tp_text_threshold = 1000,
+        target_cast_text_threshold = 1,
 
         buff_reminders = {
             default = {
@@ -227,10 +270,13 @@ return {
 }
 ```
 
-The base `frame_width`, `row_height`, `row_gap`, and `opacity` keys are kept as
-fallbacks for older configs. New saves write separate `self_*`, `party_*`,
-`pet_*`, and `target_*` layout values; party frame saves also write the
-`party_size_layouts` table for size-specific positions and dimensions.
+The base `frame_width`, `height`, `row_height`, `row_gap`, `opacity`,
+`show_mp`, `show_tp`, `show_cast`, `mp_text_threshold`, `tp_text_threshold`, and
+`cast_text_threshold` keys are kept
+as fallbacks for older configs. New saves write separate `self_*`, `party_*`,
+`pet_*`, and `target_*` layout and bar values; party frame saves also write the
+`party_size_layouts` table for size-specific positions, dimensions, columns,
+and rows.
 
 `buff_reminders` is keyed by your current main job. Each profile can enable or
 disable reminders for yourself (`self`), other players (`players`), and trusts
