@@ -596,6 +596,153 @@ local function safe_read(reader, default)
     return default;
 end
 
+local function path_join(left, right)
+    left = tostring(left or '');
+    right = tostring(right or '');
+    if (#left == 0) then
+        return right;
+    end
+
+    local last = left:sub(#left);
+    if (last == '\\' or last == '/') then
+        return left .. right;
+    end
+
+    return left .. '\\' .. right;
+end
+
+local function ashita_install_path()
+    return clean_string(safe_read(function () return AshitaCore:GetInstallPath(); end, ''));
+end
+
+local function config_addons_dir_path()
+    local root = ashita_install_path();
+    if (#root == 0) then
+        return '';
+    end
+
+    return path_join(path_join(root, 'config'), 'addons');
+end
+
+local function config_dir_path()
+    local parent = config_addons_dir_path();
+    if (#parent == 0) then
+        return '';
+    end
+
+    return path_join(parent, addon.name);
+end
+
+local function legacy_config_file_path()
+    return path_join(addon.path, 'ashitaframes_config.lua');
+end
+
+local function config_file_path()
+    local dir = config_dir_path();
+    if (#dir == 0) then
+        return legacy_config_file_path();
+    end
+
+    return path_join(dir, 'ashitaframes_config.lua');
+end
+
+local function file_exists(path)
+    local file = io.open(path, 'r');
+    if (file == nil) then
+        return false;
+    end
+
+    file:close();
+    return true;
+end
+
+local function ensure_directory(path)
+    if (#clean_string(path) == 0) then
+        return false, 'empty directory path';
+    end
+    if (ashita ~= nil and ashita.fs ~= nil and ashita.fs.exists ~= nil and ashita.fs.exists(path)) then
+        return true;
+    end
+
+    local create_dir = ashita ~= nil and ashita.fs ~= nil and (ashita.fs.create_dir or ashita.fs.create_directory) or nil;
+    if (create_dir == nil) then
+        return false, 'ashita.fs directory creation is unavailable';
+    end
+    if (create_dir(path) == false) then
+        return false, ('failed to create directory: %s'):fmt(path);
+    end
+
+    return true;
+end
+
+local function ensure_config_dir()
+    local parent = config_addons_dir_path();
+    local dir = config_dir_path();
+    if (#parent == 0 or #dir == 0) then
+        return false, 'could not determine Ashita config directory';
+    end
+
+    local ok, err = ensure_directory(parent);
+    if (not ok) then
+        return false, err;
+    end
+
+    return ensure_directory(dir);
+end
+
+local function load_lua_config(path)
+    local chunk, load_error = loadfile(path);
+    if (chunk == nil) then
+        return false, nil, tostring(load_error or 'load failed');
+    end
+
+    local ok, config = pcall(chunk);
+    if (not ok) then
+        return false, nil, tostring(config or 'execution failed');
+    end
+
+    return true, config, nil;
+end
+
+local function copy_file(source, target)
+    local input, input_error = io.open(source, 'rb');
+    if (input == nil) then
+        return false, tostring(input_error or 'open source failed');
+    end
+
+    local data = input:read('*a');
+    input:close();
+
+    local output, output_error = io.open(target, 'wb');
+    if (output == nil) then
+        return false, tostring(output_error or 'open target failed');
+    end
+
+    output:write(data or '');
+    output:close();
+    return true;
+end
+
+local function migrate_legacy_config_if_needed()
+    local path = config_file_path();
+    local legacy_path = legacy_config_file_path();
+    if (path:lower() == legacy_path:lower() or file_exists(path) or not file_exists(legacy_path)) then
+        return true, nil;
+    end
+
+    local ok, err = ensure_config_dir();
+    if (not ok) then
+        return false, err;
+    end
+
+    ok, err = copy_file(legacy_path, path);
+    if (not ok) then
+        return false, err;
+    end
+
+    return true, ('Migrated legacy config to %s.'):fmt(path);
+end
+
 local function truthy(value)
     return value == true or value == 1;
 end
@@ -980,13 +1127,21 @@ local function load_config()
     state.config_error = nil;
     state.config_save_message = nil;
     state.config_save_message_color = nil;
-    package.loaded.ashitaframes_config = nil;
 
-    local ok, config = pcall(require, 'ashitaframes_config');
-    if (not ok) then
-        state.config_error = tostring(config);
-    elseif (type(config) == 'table') then
-        overlay_settings(settings, config.settings);
+    local path = config_file_path();
+    local migrated, migration_message = migrate_legacy_config_if_needed();
+    if (not migrated) then
+        state.config_error = ('Config migration warning: %s'):fmt(tostring(migration_message));
+    end
+
+    local load_path = file_exists(path) and path or legacy_config_file_path();
+    if (file_exists(load_path)) then
+        local ok, config, error_message = load_lua_config(load_path);
+        if (not ok) then
+            state.config_error = ('%s: %s'):fmt(load_path, tostring(error_message));
+        elseif (type(config) == 'table') then
+            overlay_settings(settings, config.settings);
+        end
     end
 
     state.settings = normalize_settings(settings);
@@ -2231,25 +2386,6 @@ local function step_config_debuff_job(delta)
     mark_config_changed();
 end
 
-local function path_join(left, right)
-    left = tostring(left or '');
-    right = tostring(right or '');
-    if (#left == 0) then
-        return right;
-    end
-
-    local last = left:sub(#left);
-    if (last == '\\' or last == '/') then
-        return left .. right;
-    end
-
-    return left .. '\\' .. right;
-end
-
-local function config_file_path()
-    return path_join(addon.path, 'ashitaframes_config.lua');
-end
-
 local function bool_text(value)
     return value == true and 'true' or 'false';
 end
@@ -2521,6 +2657,11 @@ end
 local function save_config()
     local settings = capture_runtime_settings_for_save();
     local path = config_file_path();
+    local ok, err = ensure_config_dir();
+    if (not ok) then
+        return false, tostring(err or 'failed to create config directory');
+    end
+
     local file, error_message = io.open(path, 'w');
     if (file == nil) then
         return false, tostring(error_message or 'open failed');

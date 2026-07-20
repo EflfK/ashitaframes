@@ -10,11 +10,16 @@ $source = Join-Path $PSScriptRoot "ashitaframes"
 $target = Join-Path $AshitaRoot "addons\ashitaframes"
 $startupScript = Join-Path $AshitaRoot "scripts\default.txt"
 $autoloadLine = "/addon load ashitaframes"
+$configDir = Join-Path $AshitaRoot "config\addons\ashitaframes"
+$configFile = Join-Path $configDir "ashitaframes_config.lua"
+$sourceConfig = Join-Path $source "ashitaframes_config.lua"
+$legacyConfig = Join-Path $target "ashitaframes_config.lua"
 $backupRoot = Join-Path $PSScriptRoot ".local-backups"
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $backup = Join-Path $backupRoot $timestamp
 $startupBackup = $null
 $autoloadStatus = "skipped"
+$configStatus = "unchanged"
 
 if (-not (Test-Path -LiteralPath $source)) {
     throw "Source addon folder does not exist: $source"
@@ -35,11 +40,28 @@ if (Test-Path -LiteralPath $target) {
     }
 }
 
+if (Test-Path -LiteralPath $configFile) {
+    $configStatus = "already present at: $configFile"
+} elseif (Test-Path -LiteralPath $legacyConfig) {
+    New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+    Copy-Item -LiteralPath $legacyConfig -Destination $configFile -Force
+    $configStatus = "migrated legacy config to: $configFile"
+} elseif (Test-Path -LiteralPath $sourceConfig) {
+    New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+    Copy-Item -LiteralPath $sourceConfig -Destination $configFile -Force
+    $configStatus = "seeded default config at: $configFile"
+}
+
 if (Test-Path -LiteralPath $target) {
     Remove-Item -LiteralPath $target -Recurse -Force
 }
 
 Copy-Item -LiteralPath $source -Destination $target -Recurse -Force
+
+$installedLegacyConfig = Join-Path $target "ashitaframes_config.lua"
+if (Test-Path -LiteralPath $installedLegacyConfig) {
+    Remove-Item -LiteralPath $installedLegacyConfig -Force
+}
 
 if (-not $SkipAutoload) {
     if (Test-Path -LiteralPath $startupScript) {
@@ -103,6 +125,7 @@ Set-Content -LiteralPath $rollback -Value $rollbackContent -Encoding UTF8
 
 Write-Host "Installed ashitaframes addon to: $target"
 Write-Host "Autoload: $autoloadStatus"
+Write-Host "Config: $configStatus"
 Write-Host "Load now in game with: /addon load ashitaframes"
 Write-Host "Rollback script: $rollback"
 

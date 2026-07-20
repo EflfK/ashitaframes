@@ -122,28 +122,31 @@ persisted on/off toggle (`show_self`, `show_party`, `show_pet`, or
 `show_target`) plus its layout controls. The Party tab includes Protect/Shell
 reminders. The Target tab includes Dia, Paralyze, and Slow reminders.
 Use Save to write the current window layout and reminder settings to
-`ashitaframes_config.lua`. Self, Party, Pet, and Target frame width, height,
-row gap, opacity, MP bar, TP bar, cast bar, and MP/TP/cast text thresholds are
-configured independently. HP text shows percent plus current/max when that data is
-available, and the HP bar fills the row background behind the frame's other
-information. Width controls allow frames up to 750 pixels wide. Party frame layout
-is also configured separately for total party sizes 1 through 6, including
-columns and rows for stacking party members into grids; while the configuration
-window is open, the party frame fills missing non-self rows with preview members
-for the selected size. Reminder options are filtered to spells
-your current main/sub job can actually cast and that your character has learned. Missing
-target-debuff reminders are also hidden while the spell is on cooldown. Missing
-party-buff reminder flashes are hidden in towns by default; the config window
-can also suppress or allow the current non-town zone. Locked frames hide their
-title bars and window-shell backgrounds so only the individual frame rows are
-drawn; the configuration window keeps its normal container.
+`Ashita/config/addons/ashitaframes/ashitaframes_config.lua`. If an older
+`Ashita/addons/ashitaframes/ashitaframes_config.lua` exists and the normal
+config file does not, AshitaFrames migrates the legacy file on load. Self,
+Party, Pet, and Target frame width, height, row gap, opacity, MP bar, TP bar,
+cast bar, and MP/TP/cast text thresholds are configured independently. HP text
+shows percent plus current/max when that data is available, and the HP bar fills
+the row background behind the frame's other information. Width controls allow
+frames up to 750 pixels wide. Party frame layout is also configured separately
+for total party sizes 1 through 6, including columns and rows for stacking party
+members into grids; while the configuration window is open, the party frame
+fills missing non-self rows with preview members for the selected size. Reminder
+options are filtered to spells your current main/sub job can actually cast and
+that your character has learned. Missing target-debuff reminders are also hidden
+while the spell is on cooldown. Missing party-buff reminder flashes are hidden in
+towns by default; the config window can also suppress or allow the current
+non-town zone. Locked frames hide their title bars and window-shell backgrounds
+so only the individual frame rows are drawn; the configuration window keeps its
+normal container.
 
 Manual config is still supported:
 
 Edit:
 
 ```text
-ashitaframes/ashitaframes_config.lua
+Ashita/config/addons/ashitaframes/ashitaframes_config.lua
 ```
 
 The defaults are intentionally conservative:
