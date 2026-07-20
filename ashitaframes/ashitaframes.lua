@@ -323,7 +323,7 @@ local LIMITS = {
     width_min = 170,
     width_max = 750,
     row_height_min = 32,
-    target_row_height_with_debuffs_min = 92,
+    target_row_height_with_debuffs_min = 119,
     party_row_height_with_buffs_min = 92,
     row_height_max = 132,
     row_gap_min = 0,
@@ -352,11 +352,15 @@ local state = {
     config_job_key = nil,
     config_debuff_job_key = nil,
     buff_name_cache = { },
+    buff_id_cache = { },
     buff_icon_cache = { },
     status_icon_cache = { },
     observed_buffs = { },
+    observed_target_buffs = { },
+    observed_target_buff_names = { },
     observed_target_debuffs = { },
     observed_target_debuff_names = { },
+    observed_target_checks = { },
     pending_target_debuff_cast = nil,
     active_casts_by_id = { },
     active_casts_by_name = { },
@@ -1463,6 +1467,67 @@ local function party_status_buffs(party_index, server_id)
     return { };
 end
 
+function status_icon_ids_from_indexed_source(source)
+    local result = { };
+    local seen = { };
+    local saw_value = false;
+
+    if (source == nil) then
+        return result;
+    end
+
+    for index = 1, 32, 1 do
+        local buff_id = safe_read(function () return source[index]; end, nil);
+        if (buff_id ~= nil) then
+            saw_value = true;
+        end
+        if (buff_id == 255) then
+            break;
+        end
+
+        append_buff_id(result, seen, buff_id);
+    end
+
+    if (saw_value) then
+        return result;
+    end
+
+    for index = 0, 31, 1 do
+        local buff_id = safe_read(function () return source[index]; end, nil);
+        if (buff_id == 255) then
+            break;
+        end
+
+        append_buff_id(result, seen, buff_id);
+    end
+
+    return result;
+end
+
+function target_entity_buffs(entity, target_index)
+    if (not state.settings.show_buffs or target_index == nil or target_index <= 0) then
+        return { };
+    end
+
+    local result = status_icon_ids_from_indexed_source(entity ~= nil and safe_read(function () return entity:GetStatusIcons(target_index); end, nil) or nil);
+    if (#result > 0) then
+        return result;
+    end
+
+    local target_entity = safe_read(function () return GetEntity(target_index); end, nil);
+    result = status_icon_ids_from_indexed_source(target_entity ~= nil and safe_read(function () return target_entity.StatusIcons; end, nil) or nil);
+    if (#result > 0) then
+        return result;
+    end
+
+    result = status_icon_ids_from_indexed_source(target_entity ~= nil and safe_read(function () return target_entity.Buffs; end, nil) or nil);
+    if (#result > 0) then
+        return result;
+    end
+
+    return status_icon_ids_from_indexed_source(target_entity ~= nil and safe_read(function () return target_entity.StatusEffects; end, nil) or nil);
+end
+
 local function observed_name_key(name)
     name = clean_string(name):lower():gsub('%s+', ' ');
     if (#name == 0) then
@@ -1527,8 +1592,11 @@ local function clear_observed_buffs()
 end
 
 local function clear_observed_target_debuffs()
+    state.observed_target_buffs = { };
+    state.observed_target_buff_names = { };
     state.observed_target_debuffs = { };
     state.observed_target_debuff_names = { };
+    state.observed_target_checks = { };
     state.pending_target_debuff_cast = nil;
 end
 
@@ -1635,6 +1703,178 @@ function observed_target_debuffs_for_unit(server_id, name)
     return result;
 end
 
+function prune_observed_target_buffs()
+    local now = os.time();
+    for target_id, entry in pairs(state.observed_target_buffs) do
+        if (type(entry) ~= 'table') then
+            state.observed_target_buffs[target_id] = nil;
+        else
+            local has_active = false;
+            for buff_id, value in pairs(entry) do
+                if (type(value) ~= 'table' or tonumber(value.expires_at) == nil or value.expires_at <= now) then
+                    entry[buff_id] = nil;
+                else
+                    has_active = true;
+                end
+            end
+
+            if (not has_active) then
+                state.observed_target_buffs[target_id] = nil;
+            end
+        end
+    end
+
+    for name, entry in pairs(state.observed_target_buff_names) do
+        if (type(entry) ~= 'table') then
+            state.observed_target_buff_names[name] = nil;
+        else
+            local has_active = false;
+            for buff_id, value in pairs(entry) do
+                if (type(value) ~= 'table' or tonumber(value.expires_at) == nil or value.expires_at <= now) then
+                    entry[buff_id] = nil;
+                else
+                    has_active = true;
+                end
+            end
+
+            if (not has_active) then
+                state.observed_target_buff_names[name] = nil;
+            end
+        end
+    end
+end
+
+function observed_target_buff_id_lookup(server_id)
+    prune_observed_target_buffs();
+
+    local target_id = tonumber(server_id);
+    local entry = target_id ~= nil and state.observed_target_buffs[target_id] or nil;
+    local result = { };
+    if (type(entry) ~= 'table') then
+        return result;
+    end
+
+    for buff_id, value in pairs(entry) do
+        if (type(value) == 'table' and tonumber(value.expires_at) ~= nil and value.expires_at > os.time()) then
+            result[tonumber(buff_id)] = true;
+        end
+    end
+
+    return result;
+end
+
+function observed_target_buff_name_lookup(name)
+    prune_observed_target_buffs();
+
+    local name_key = observed_target_name_key(name);
+    local entry = name_key ~= nil and state.observed_target_buff_names[name_key] or nil;
+    local result = { };
+    if (type(entry) ~= 'table') then
+        return result;
+    end
+
+    for buff_id, value in pairs(entry) do
+        if (type(value) == 'table' and tonumber(value.expires_at) ~= nil and value.expires_at > os.time()) then
+            result[tonumber(buff_id)] = true;
+        end
+    end
+
+    return result;
+end
+
+function observed_target_buffs_for_unit(server_id, name)
+    local active = observed_target_buff_id_lookup(server_id);
+    for buff_id, enabled in pairs(observed_target_buff_name_lookup(name)) do
+        if (enabled == true) then
+            active[buff_id] = true;
+        end
+    end
+
+    local result = { };
+    local seen = { };
+
+    for buff_id, _ in pairs(active) do
+        append_buff_id(result, seen, buff_id);
+    end
+
+    table.sort(result);
+    return result;
+end
+
+function ensure_observed_target_checks()
+    if (type(state.observed_target_checks) ~= 'table') then
+        state.observed_target_checks = { };
+    end
+    if (type(state.observed_target_checks.by_id) ~= 'table') then
+        state.observed_target_checks.by_id = { };
+    end
+    if (type(state.observed_target_checks.by_name) ~= 'table') then
+        state.observed_target_checks.by_name = { };
+    end
+
+    return state.observed_target_checks;
+end
+
+function prune_observed_target_checks()
+    local checks = ensure_observed_target_checks();
+    local now = os.time();
+
+    for key, entry in pairs(checks.by_id) do
+        if (type(entry) ~= 'table' or ((now - (tonumber(entry.checked_at) or 0)) > 1800)) then
+            checks.by_id[key] = nil;
+        end
+    end
+
+    for key, entry in pairs(checks.by_name) do
+        if (type(entry) ~= 'table' or ((now - (tonumber(entry.checked_at) or 0)) > 1800)) then
+            checks.by_name[key] = nil;
+        end
+    end
+end
+
+function set_observed_target_check(name, server_id, toughness, level)
+    local name_key = observed_target_name_key(name);
+    local target_id = tonumber(server_id);
+    if (name_key == nil and (target_id == nil or target_id == 0)) then
+        return false;
+    end
+
+    local entry = {
+        toughness = clean_string(toughness),
+        level = tonumber(level),
+        checked_at = os.time(),
+    };
+    local checks = ensure_observed_target_checks();
+
+    if (target_id ~= nil and target_id ~= 0) then
+        checks.by_id[target_id] = entry;
+    end
+    if (name_key ~= nil) then
+        checks.by_name[name_key] = entry;
+    end
+
+    return true;
+end
+
+function observed_target_check_for_unit(server_id, name)
+    prune_observed_target_checks();
+
+    local checks = ensure_observed_target_checks();
+    local target_id = tonumber(server_id);
+    local entry = target_id ~= nil and checks.by_id[target_id] or nil;
+    if (type(entry) == 'table') then
+        return entry;
+    end
+
+    local name_key = observed_target_name_key(name);
+    entry = name_key ~= nil and checks.by_name[name_key] or nil;
+    if (type(entry) == 'table') then
+        return entry;
+    end
+
+    return nil;
+end
+
 local function sync_observed_buffs_for_party(party, self_zone)
     local zone_id = tonumber(self_zone);
     if (zone_id ~= nil) then
@@ -1698,6 +1938,55 @@ local function buff_name(buff_id)
 
     state.buff_name_cache[buff_id] = name;
     return name;
+end
+
+function normalized_status_name(name)
+    name = clean_string(name):lower():gsub('%s+', ' ');
+    if (#name == 0) then
+        return nil;
+    end
+
+    return name;
+end
+
+function buff_id_from_name(name)
+    name = clean_string(name);
+    local cache_key = normalized_status_name(name);
+    if (cache_key == nil) then
+        return nil;
+    end
+    if (state.buff_id_cache[cache_key] == false) then
+        return nil;
+    end
+    if (state.buff_id_cache[cache_key] ~= nil) then
+        return state.buff_id_cache[cache_key];
+    end
+
+    local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
+    if (resources == nil) then
+        return nil;
+    end
+
+    local id = tonumber(safe_read(function () return resources:GetString('buffs.names', name, 2); end, nil));
+    if (id ~= nil) then
+        id = math.floor(id);
+        local resolved = clean_string(safe_read(function () return resources:GetString('buffs.names', id); end, ''));
+        if (#resolved > 0 and id > 0 and id <= 0x3FF) then
+            state.buff_id_cache[cache_key] = id;
+            return id;
+        end
+    end
+
+    for scan_id = 1, 0x3FF, 1 do
+        local resolved = clean_string(safe_read(function () return resources:GetString('buffs.names', scan_id); end, ''));
+        if (normalized_status_name(resolved) == cache_key) then
+            state.buff_id_cache[cache_key] = scan_id;
+            return scan_id;
+        end
+    end
+
+    state.buff_id_cache[cache_key] = false;
+    return nil;
 end
 
 local function ensure_d3d_device()
@@ -2259,9 +2548,39 @@ local function buff_icon_items(unit, missing_items)
     return items;
 end
 
+function target_buff_icon_items(unit)
+    local items = { };
+    if (not state.settings.show_buffs or unit.kind ~= 'target' or type(unit.buffs) ~= 'table') then
+        return items;
+    end
+
+    local max_buffs = state.settings.max_buffs or DEFAULT_SETTINGS.max_buffs;
+    for index = 1, #unit.buffs, 1 do
+        if (#items >= max_buffs) then
+            break;
+        end
+
+        local buff_id = unit.buffs[index];
+        if (target_debuff_key_from_id(buff_id) == nil) then
+            local icon = load_status_icon(buff_id);
+            if (icon ~= nil) then
+                table.insert(items, {
+                    id = buff_id,
+                    name = buff_name(buff_id),
+                    handle = icon.handle,
+                    state = 'active',
+                    kind = 'buff',
+                });
+            end
+        end
+    end
+
+    return items;
+end
+
 local function target_debuff_icon_items(unit)
     local items = { };
-    if (type(unit.debuffs) ~= 'table') then
+    if (not state.settings.show_target_debuffs or type(unit.debuffs) ~= 'table') then
         return items;
     end
 
@@ -3377,7 +3696,9 @@ local function collect_target_unit()
         job = '',
         reminder_job = current_player_job_key(),
         cast = active_cast_for_unit(server_id, name, false),
+        buffs = merge_buff_lists(target_entity_buffs(entity, active_index), observed_target_buffs_for_unit(server_id, name)),
         debuffs = observed_target_debuffs_for_unit(server_id, name),
+        check = observed_target_check_for_unit(server_id, name),
         same_zone = true,
         dim = false,
     };
@@ -3600,6 +3921,10 @@ function hp_status_text(unit)
     local percent_text = display_percent(unit.hp_pct);
     local pair = resource_pair_text(unit.hp, unit.hp_max);
 
+    if (unit.kind == 'target' and unit.distance ~= nil) then
+        return ('%s: %.1f'):fmt(percent_text, unit.distance);
+    end
+
     if (pair ~= nil) then
         return ('%s %s'):fmt(percent_text, pair);
     end
@@ -3674,13 +3999,40 @@ function cast_status_text(unit, layout)
     return ('%s %d%%'):fmt(label, math.floor(percent + 0.5));
 end
 
-local function unit_right_label(unit)
-    if (unit.kind == 'target') then
+function target_check_display_text(entry)
+    if (type(entry) ~= 'table') then
+        return '?? Lv.??';
+    end
+
+    local toughness = clean_string(entry.toughness);
+    if (#toughness == 0) then
+        toughness = '??';
+    end
+
+    local level = tonumber(entry.level);
+    local level_text = level ~= nil and tostring(math.floor(level + 0.5)) or '??';
+    return ('%s Lv.%s'):fmt(toughness, level_text);
+end
+
+function target_check_label(unit)
+    if (unit.kind ~= 'target' or clean_string(unit.name) == 'No target') then
+        return '';
+    end
+
+    if (not target_debuff_target_eligible(unit)) then
         if (unit.distance ~= nil) then
             return ('%.1f'):fmt(unit.distance);
         end
 
         return '';
+    end
+
+    return target_check_display_text(unit.check);
+end
+
+local function unit_right_label(unit)
+    if (unit.kind == 'target') then
+        return target_check_label(unit);
     end
 
     if (unit.kind == 'pet') then
@@ -3790,10 +4142,10 @@ local function draw_buff_missing_badge(draw_list, x, y, alpha, items)
     end
 end
 
-local function draw_buff_icon_rail(unit, x, y, row_height, alpha, items, missing_items)
-    items = items or buff_icon_items(unit);
-    missing_items = missing_items or missing_buff_icon_items(unit);
-    if (not buff_rail_visible(unit, items, missing_items)) then
+function draw_status_icon_rail(unit, x, y, row_height, alpha, items, missing_items, align_right)
+    items = items or { };
+    missing_items = missing_items or { };
+    if (#items == 0 and #missing_items == 0) then
         return;
     end
 
@@ -3807,7 +4159,11 @@ local function draw_buff_icon_rail(unit, x, y, row_height, alpha, items, missing
     local display_items = { };
 
     draw_list:AddRectFilled({ x + 1, y + 1 }, { x + BUFF_RAIL.width - 1, y + row_height - 1 }, color_u32(apply_alpha(COLORS.shadow, alpha * 0.22)), 3.0);
-    draw_list:AddLine({ x + BUFF_RAIL.width - 1, y + 5 }, { x + BUFF_RAIL.width - 1, y + row_height - 5 }, color_u32(apply_alpha(COLORS.row_border, alpha * 0.75)), 1.0);
+    if (align_right == true) then
+        draw_list:AddLine({ x, y + 5 }, { x, y + row_height - 5 }, color_u32(apply_alpha(COLORS.row_border, alpha * 0.75)), 1.0);
+    else
+        draw_list:AddLine({ x + BUFF_RAIL.width - 1, y + 5 }, { x + BUFF_RAIL.width - 1, y + row_height - 5 }, color_u32(apply_alpha(COLORS.row_border, alpha * 0.75)), 1.0);
+    end
 
     for _, item in ipairs(items) do
         if (item.state == 'missing' and item.handle ~= nil) then
@@ -3846,42 +4202,40 @@ local function draw_buff_icon_rail(unit, x, y, row_height, alpha, items, missing
     imgui.SetCursorScreenPos({ x, y });
 end
 
-local function draw_target_debuff_icon_row(unit, x, y, width, alpha)
-    if (not state.settings.show_target_debuffs or not target_debuff_target_eligible(unit)) then
+local function draw_buff_icon_rail(unit, x, y, row_height, alpha, items, missing_items)
+    items = items or buff_icon_items(unit);
+    missing_items = missing_items or missing_buff_icon_items(unit);
+    if (not buff_rail_visible(unit, items, missing_items)) then
         return;
     end
 
-    local items = target_debuff_icon_items(unit);
-    if (#items == 0) then
+    draw_status_icon_rail(unit, x, y, row_height, alpha, items, missing_items, false);
+end
+
+function target_buff_rail_visible(unit, items)
+    return state.settings.show_buffs and unit.kind == 'target' and type(items) == 'table' and #items > 0;
+end
+
+function target_debuff_rail_visible(unit, items)
+    return state.settings.show_target_debuffs and target_debuff_target_eligible(unit) and type(items) == 'table' and #items > 0;
+end
+
+function draw_target_buff_icon_rail(unit, x, y, row_height, alpha, items)
+    items = items or target_buff_icon_items(unit);
+    if (not target_buff_rail_visible(unit, items)) then
         return;
     end
 
-    local draw_list = imgui.GetWindowDrawList();
-    local tint = unit.dim and { 0.62, 0.62, 0.62, 0.62 } or { 1.00, 1.00, 1.00, 1.00 };
-    local icon_x = x + 8;
-    local icon_y = y + 24;
-    local max_x = x + width - 8;
+    draw_status_icon_rail(unit, x, y, row_height, alpha, items, { }, false);
+end
 
-    for _, item in ipairs(items) do
-        if ((icon_x + BUFF_ICON_SIZE + 3) > max_x) then
-            break;
-        end
-
-        draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint);
-        if (imgui.IsItemHovered()) then
-            imgui.BeginTooltip();
-            if (item.state == 'missing') then
-                imgui.TextColored(COLORS.warning, ('Missing: %s'):fmt(item.name));
-            else
-                imgui.Text(item.name);
-            end
-            imgui.EndTooltip();
-        end
-
-        icon_x = icon_x + BUFF_ICON_SIZE + BUFF_ICON_GAP;
+function draw_target_debuff_icon_rail(unit, x, y, row_height, alpha, items)
+    items = items or target_debuff_icon_items(unit);
+    if (not target_debuff_rail_visible(unit, items)) then
+        return;
     end
 
-    imgui.SetCursorScreenPos({ x, y });
+    draw_status_icon_rail(unit, x, y, row_height, alpha, items, { }, true);
 end
 
 function active_resource_bar_height(unit, layout)
@@ -4005,7 +4359,10 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
     local border = unit.kind == 'target' and COLORS.row_border_active or COLORS.row_border;
     local buff_missing_items = { };
     local buff_items = { };
+    local target_buff_items = { };
+    local target_debuff_items = { };
     local buff_rail_width = 0;
+    local debuff_rail_width = 0;
 
     if (state.settings.show_buffs and unit.kind == 'party') then
         buff_missing_items = missing_buff_icon_items(unit);
@@ -4013,14 +4370,24 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
         if (buff_rail_visible(unit, buff_items, buff_missing_items)) then
             buff_rail_width = BUFF_RAIL.width;
         end
+    elseif (unit.kind == 'target') then
+        target_buff_items = target_buff_icon_items(unit);
+        target_debuff_items = target_debuff_icon_items(unit);
+        if (target_buff_rail_visible(unit, target_buff_items)) then
+            buff_rail_width = BUFF_RAIL.width;
+        end
+        if (target_debuff_rail_visible(unit, target_debuff_items)) then
+            debuff_rail_width = BUFF_RAIL.width;
+        end
     end
 
     draw_list:AddRectFilled({ x, y }, { x + width, y + row_height }, color_u32(apply_alpha(row_bg, alpha)), 4.0);
-    draw_resource_bars(draw_list, unit, layout, x + buff_rail_width, y, width - buff_rail_width, row_height, alpha);
+    draw_resource_bars(draw_list, unit, layout, x + buff_rail_width, y, math.max(1, width - buff_rail_width - debuff_rail_width), row_height, alpha);
     draw_list:AddRect({ x, y }, { x + width, y + row_height }, color_u32(apply_alpha(border, alpha)), 4.0, ImDrawCornerFlags_All, 1.0);
 
     draw_buff_icon_rail(unit, x, y, row_height, alpha, buff_items, buff_missing_items);
-    draw_target_debuff_icon_row(unit, x, y, width, alpha);
+    draw_target_buff_icon_rail(unit, x, y, row_height, alpha, target_buff_items);
+    draw_target_debuff_icon_rail(unit, x + width - BUFF_RAIL.width, y, row_height, alpha, target_debuff_items);
 
     if (skip_spacing ~= true) then
         imgui.Dummy({ width, row_height + layout.row_gap });
@@ -4033,7 +4400,7 @@ local function effective_row_height(unit, layout)
     if (unit.kind == 'party' and state.settings.show_buffs) then
         return math.max(row_height, LIMITS.party_row_height_with_buffs_min);
     end
-    if (unit.kind == 'target' and state.settings.show_target_debuffs and target_debuff_target_eligible(unit)) then
+    if (unit.kind == 'target' and ((state.settings.show_buffs and type(unit.buffs) == 'table' and #unit.buffs > 0) or (state.settings.show_target_debuffs and target_debuff_target_eligible(unit)))) then
         return math.max(row_height, LIMITS.target_row_height_with_debuffs_min);
     end
 
@@ -4979,6 +5346,98 @@ function clear_observed_target_debuff_status(server_id, status_id)
     return set_observed_target_debuff(server_id, key, false);
 end
 
+function set_observed_target_buff(server_id, status_id, enabled)
+    local target_id = tonumber(server_id);
+    local buff_id = tonumber(status_id);
+    if (target_id == nil or target_id == 0 or buff_id == nil or buff_id <= 0 or buff_id > 0x3FF or target_debuff_key_from_id(buff_id) ~= nil) then
+        return false;
+    end
+
+    if (enabled == true) then
+        state.observed_target_buffs[target_id] = state.observed_target_buffs[target_id] or { };
+        state.observed_target_buffs[target_id][buff_id] = {
+            status_id = buff_id,
+            expires_at = os.time() + 600,
+        };
+        return true;
+    end
+
+    local entry = state.observed_target_buffs[target_id];
+    if (type(entry) ~= 'table') then
+        return false;
+    end
+
+    entry[buff_id] = nil;
+    if (next(entry) == nil) then
+        state.observed_target_buffs[target_id] = nil;
+    end
+
+    return true;
+end
+
+function set_observed_target_buff_name(name, status_id, enabled)
+    local name_key = observed_target_name_key(name);
+    local buff_id = tonumber(status_id);
+    if (name_key == nil or buff_id == nil or buff_id <= 0 or buff_id > 0x3FF or target_debuff_key_from_id(buff_id) ~= nil) then
+        return false;
+    end
+
+    if (enabled == true) then
+        state.observed_target_buff_names[name_key] = state.observed_target_buff_names[name_key] or { };
+        state.observed_target_buff_names[name_key][buff_id] = {
+            status_id = buff_id,
+            expires_at = os.time() + 600,
+        };
+        return true;
+    end
+
+    local entry = state.observed_target_buff_names[name_key];
+    if (type(entry) ~= 'table') then
+        return false;
+    end
+
+    entry[buff_id] = nil;
+    if (next(entry) == nil) then
+        state.observed_target_buff_names[name_key] = nil;
+    end
+
+    return true;
+end
+
+function set_observed_target_buff_for_name(name, status_id, enabled)
+    local handled = set_observed_target_buff_name(name, status_id, enabled);
+    local current_name, server_id = current_target_identity();
+    if (observed_target_name_key(name) ~= nil and observed_target_name_key(name) == observed_target_name_key(current_name)) then
+        handled = set_observed_target_buff(server_id, status_id, enabled) or handled;
+    end
+
+    return handled;
+end
+
+function clear_observed_target_buff_name(name)
+    local name_key = observed_target_name_key(name);
+    if (name_key == nil or state.observed_target_buff_names[name_key] == nil) then
+        return false;
+    end
+
+    state.observed_target_buff_names[name_key] = nil;
+    return true;
+end
+
+function clear_observed_target_buff_for_name(name)
+    local cleared = clear_observed_target_buff_name(name);
+    local current_name, server_id = current_target_identity();
+    if (observed_target_name_key(name) ~= nil and observed_target_name_key(name) == observed_target_name_key(current_name)) then
+        local target_id = tonumber(server_id);
+        if (target_id ~= nil and state.observed_target_buffs[target_id] ~= nil) then
+            state.observed_target_buffs[target_id] = nil;
+            cleared = true;
+        end
+    end
+
+    return cleared;
+end
+
 function read_le_uint(data, offset, size)
     local result = 0;
     local multiplier = 1;
@@ -5220,6 +5679,133 @@ function current_party_contains_name(name)
     return false;
 end
 
+function current_target_identity()
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    local target = memory ~= nil and safe_read(function () return memory:GetTarget(); end, nil) or nil;
+    local entity = memory ~= nil and safe_read(function () return memory:GetEntity(); end, nil) or nil;
+    if (target == nil) then
+        return '', nil;
+    end
+
+    local primary_index = safe_read(function () return target:GetTargetIndex(0); end, 0);
+    local sub_index = safe_read(function () return target:GetTargetIndex(1); end, 0);
+    local is_sub_target_active = truthy(safe_read(function () return target:GetIsSubTargetActive(); end, false));
+    local active_index = is_sub_target_active and sub_index or primary_index;
+    if (active_index == nil or active_index <= 0) then
+        return '', nil;
+    end
+
+    local name = entity ~= nil and clean_string(safe_read(function () return entity:GetName(active_index); end, '')) or '';
+    if (#name == 0) then
+        name = clean_string(safe_read(function () return target:GetWindowName(); end, ''));
+    end
+    if (#name == 0) then
+        name = clean_string(safe_read(function () return target:GetLastTargetName(); end, ''));
+    end
+
+    local server_id = entity ~= nil and safe_read(function () return entity:GetServerId(active_index); end, nil) or nil;
+    if (server_id == nil or server_id == 0) then
+        server_id = safe_read(function () return target:GetServerId(0); end, nil);
+    end
+
+    return name, server_id;
+end
+
+function target_check_toughness_from_text(text)
+    local lower = clean_string(text):lower();
+    if (#lower == 0) then
+        return nil;
+    end
+
+    if (lower:find('impossible to gauge', 1, true) ~= nil) then
+        return '??';
+    end
+    if (lower:find('too weak', 1, true) ~= nil) then
+        return 'Too Weak';
+    end
+    if (lower:find('incredibly easy prey', 1, true) ~= nil or lower:find('very easy prey', 1, true) ~= nil) then
+        return 'Very Easy';
+    end
+    if (lower:find('easy prey', 1, true) ~= nil) then
+        return 'Easy Prey';
+    end
+    if (lower:find('decent challenge', 1, true) ~= nil) then
+        return 'Decent';
+    end
+    if (lower:find('even match', 1, true) ~= nil) then
+        return 'Even Match';
+    end
+    if (lower:find('incredibly tough', 1, true) ~= nil) then
+        return 'Incred. Tough';
+    end
+    if (lower:find('very tough', 1, true) ~= nil) then
+        return 'Very Tough';
+    end
+    if (lower:find('tough', 1, true) ~= nil) then
+        return 'Tough';
+    end
+
+    return nil;
+end
+
+function target_check_level_from_text(text)
+    local lower = clean_string(text):lower();
+    local level = lower:match('level%s*:%s*(%d+)')
+        or lower:match('level%s+(%d+)')
+        or lower:match('lv%.%s*:%s*(%d+)')
+        or lower:match('lv%.%s*(%d+)')
+        or lower:match('lv%s*:%s*(%d+)')
+        or lower:match('lv%s*(%d+)');
+
+    level = tonumber(level);
+    if (level == nil or level <= 0 or level > 255) then
+        return nil;
+    end
+
+    return math.floor(level + 0.5);
+end
+
+function target_check_name_from_text(text)
+    local name = text:match("^The%s+(.+)'s%s+strength%s+is%s+impossible%s+to%s+gauge")
+        or text:match("^(.+)'s%s+strength%s+is%s+impossible%s+to%s+gauge")
+        or text:match('^The%s+(.+)%s+seems')
+        or text:match('^(.+)%s+seems')
+        or text:match('^The%s+(.+)%s+checks%s+as')
+        or text:match('^(.+)%s+checks%s+as')
+        or text:match('^The%s+(.+)%s+is%s+level')
+        or text:match('^(.+)%s+is%s+level');
+
+    return clean_string(name);
+end
+
+function process_observed_target_check_text(message)
+    local text = clean_event_message(message);
+    if (#text == 0) then
+        return false;
+    end
+
+    local lower = text:lower();
+    local name = target_check_name_from_text(text);
+    if (lower:find('seems', 1, true) == nil and lower:find('checks as', 1, true) == nil and lower:find('check', 1, true) == nil and lower:find('impossible to gauge', 1, true) == nil and #name == 0) then
+        return false;
+    end
+
+    local toughness = target_check_toughness_from_text(text);
+    local level = target_check_level_from_text(text);
+    if (toughness == nil and level == nil) then
+        return false;
+    end
+
+    local current_name, server_id = current_target_identity();
+    if (#name == 0) then
+        name = current_name;
+    elseif (observed_target_name_key(name) ~= observed_target_name_key(current_name)) then
+        server_id = nil;
+    end
+
+    return set_observed_target_check(name, server_id, toughness or '??', level);
+end
+
 function set_observed_buff(name, key, enabled)
     local name_key = observed_name_key(name);
     key = normalize_buff_key(key);
@@ -5276,6 +5862,20 @@ function process_observed_buff_text(message)
     end
 
     return set_observed_buff(name, key, enabled);
+end
+
+function process_observed_target_buff_text(message)
+    local name, buff, enabled = observed_buff_event(clean_event_message(message));
+    if (name == nil or buff == nil or current_party_contains_name(name)) then
+        return false;
+    end
+
+    local buff_id = buff_id_from_name(buff);
+    if (buff_id == nil or target_debuff_key_from_id(buff_id) ~= nil) then
+        return false;
+    end
+
+    return set_observed_target_buff_for_name(name, buff_id, enabled);
 end
 
 function current_player_name()
@@ -5419,15 +6019,17 @@ function process_observed_target_debuff_text(message)
     target = text:match('^(.-) falls to the ground%.$');
     if (target ~= nil) then
         local cleared = clear_observed_target_debuff_name(target);
+        local cleared_buffs = clear_observed_target_buff_for_name(target);
         clear_pending_target_debuff_if_matches(target);
-        return cleared;
+        return cleared or cleared_buffs;
     end
 
     target = text:match('^.- defeats (.-)%.$');
     if (target ~= nil) then
         local cleared = clear_observed_target_debuff_name(target);
+        local cleared_buffs = clear_observed_target_buff_for_name(target);
         clear_pending_target_debuff_if_matches(target);
-        return cleared;
+        return cleared or cleared_buffs;
     end
 
     target = text:match('^Unable to see (.-)%.$') or text:match('^You lose sight of (.-)%.$') or text:match('^(.-) is out of range%.$') or text:match('^(.-) is too far away%.$');
@@ -5509,11 +6111,13 @@ function process_observed_cast_text(message)
     return false;
 end
 
-function process_observed_text(message)
+function process_observed_text(message, allow_target_buffs)
     local handled_buff = process_observed_buff_text(message);
+    local handled_target_buff = allow_target_buffs == true and process_observed_target_buff_text(message) or false;
     local handled_debuff = process_observed_target_debuff_text(message);
+    local handled_check = process_observed_target_check_text(message);
     local handled_cast = process_observed_cast_text(message);
-    return handled_buff or handled_debuff or handled_cast;
+    return handled_buff or handled_target_buff or handled_debuff or handled_check or handled_cast;
 end
 
 function current_chat_log_path()
@@ -5563,7 +6167,7 @@ function seed_observed_buffs_from_chat_log()
 
     state.suppress_cast_tracking = true;
     for index = start_index, #lines, 1 do
-        process_observed_text(lines[index]);
+        process_observed_text(lines[index], false);
     end
     state.suppress_cast_tracking = false;
 
@@ -5605,7 +6209,7 @@ function poll_observed_buffs_from_chat_log()
 
     file:seek('set', position);
     for line in file:lines() do
-        if (process_observed_text(line)) then
+        if (process_observed_text(line, true)) then
             state.observed_log_events = state.observed_log_events + 1;
         end
     end
@@ -5626,7 +6230,7 @@ function handle_text_in(e)
         local text = tostring(message or '');
         if (#text > 0 and seen[text] ~= true) then
             seen[text] = true;
-            if (process_observed_text(text)) then
+            if (process_observed_text(text, true)) then
                 state.observed_text_events = state.observed_text_events + 1;
                 return;
             end
@@ -5717,6 +6321,7 @@ end);
 
 ashita.events.register('d3d_present', 'present_cb', function ()
     poll_observed_buffs_from_chat_log();
+    prune_observed_target_buffs();
     prune_observed_target_debuffs();
     prune_active_casts();
 

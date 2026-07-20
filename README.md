@@ -9,8 +9,8 @@ clean while important unit information remains visible elsewhere on screen.
 
 ## Current Scope
 
-- Draws a draggable target frame with name, HP percent, and distance when
-  available.
+- Draws a draggable target frame with name, HP percent, distance when
+  available, and observed check difficulty/level in the top-right label slot.
 - Draws a draggable self frame for the local player.
 - Draws draggable party frames for party members other than yourself, with
   optional alliance slots. Trust slots that linger in Ashita memory after
@@ -36,9 +36,11 @@ clean while important unit information remains visible elsewhere on screen.
   observed state, and a bounded live chat-log tail keeps trust buffs updated
   after reloads and new casts.
   Protect and Shell are mapped first.
-- Shows target-frame icons for owned mapped debuffs and flashes missing
-  target-debuff reminders only when the spell is learned, usable by the current
-  main/sub job, and off cooldown. Dia, Paralyze, and Slow are mapped first.
+- Shows compact target-frame status rails: observed target buffs on the left
+  and owned mapped debuffs plus missing target-debuff reminders on a matching
+  right rail. Missing target-debuff reminders only flash when the spell is
+  learned, usable by the current main/sub job, and off cooldown. Dia, Paralyze,
+  and Slow are mapped first.
 - Includes a persistent in-game configuration window for visibility, locking,
   sizing, opacity, self/party/pet/target display, party buff display, target
   debuff display, missing-buff reminders, and alliance display.
