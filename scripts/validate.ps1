@@ -14,6 +14,11 @@ foreach ($path in @($addon, $config, $readme)) {
 $lua = Get-Content -LiteralPath $addon -Raw
 $configText = Get-Content -LiteralPath $config -Raw
 
+$topLevelLocalCount = ([regex]::Matches($lua, "(?m)^local\s+")).Count
+if ($topLevelLocalCount -gt 190) {
+    throw "Addon has $topLevelLocalCount top-level local declarations; keep this below Lua 5.1's 200-local chunk limit."
+}
+
 $required = @(
     "addon.name",
     "ashita.events.register('d3d_present'",

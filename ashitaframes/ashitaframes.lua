@@ -4393,14 +4393,14 @@ local function render_config_window()
     imgui.End();
 end
 
-local function print_help()
+function print_help()
     log_info('Commands:');
     print(chat.header(addon.name):append(chat.message('/ashitaframes show | hide | toggle')));
     print(chat.header(addon.name):append(chat.message('/ashitaframes lock | unlock | config')));
     print(chat.header(addon.name):append(chat.message('/ashitaframes reload | status')));
 end
 
-local function observed_buff_summary()
+function observed_buff_summary()
     local names = { };
 
     for name, buffs in pairs(state.observed_buffs) do
@@ -4427,7 +4427,7 @@ local function observed_buff_summary()
     return table.concat(names, ', ');
 end
 
-local function print_status()
+function print_status()
     local reminder_job = current_player_job_key();
     local reminder_profile = reminder_profile_for_job(reminder_job);
     local status_party_size = party_size(state.settings.party_preview_size);
@@ -4522,13 +4522,13 @@ local TARGET_DEBUFF_DEATH_MESSAGES = {
     [646] = true,
 };
 
-local function local_player_server_id()
+function local_player_server_id()
     local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
     local party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
     return party ~= nil and tonumber(safe_read(function () return party:GetMemberServerId(0); end, nil)) or nil;
 end
 
-local function target_debuff_duration_seconds(key, spell_id)
+function target_debuff_duration_seconds(key, spell_id)
     key = normalize_target_debuff_key(key);
     spell_id = tonumber(spell_id);
     if (spell_id ~= nil and TARGET_DEBUFF_SPELL_DURATIONS[spell_id] ~= nil) then
@@ -4539,7 +4539,7 @@ local function target_debuff_duration_seconds(key, spell_id)
     return clamp_int(definition ~= nil and definition.duration_seconds or 120, 1, 86400);
 end
 
-local function set_observed_target_debuff(server_id, key, enabled, spell_id)
+function set_observed_target_debuff(server_id, key, enabled, spell_id)
     local target_id = tonumber(server_id);
     key = normalize_target_debuff_key(key);
     if (target_id == nil or target_id == 0 or key == nil or target_debuff_id_for_key(key) == nil) then
@@ -4618,7 +4618,7 @@ function clear_observed_target_debuff_name_status(name, status)
     return set_observed_target_debuff_name(name, key, false);
 end
 
-local function clear_observed_target_debuff_status(server_id, status_id)
+function clear_observed_target_debuff_status(server_id, status_id)
     local key = target_debuff_key_from_id(status_id);
     if (key == nil) then
         return false;
@@ -4627,7 +4627,7 @@ local function clear_observed_target_debuff_status(server_id, status_id)
     return set_observed_target_debuff(server_id, key, false);
 end
 
-local function read_le_uint(data, offset, size)
+function read_le_uint(data, offset, size)
     local result = 0;
     local multiplier = 1;
     for index = 0, size - 1, 1 do
@@ -4643,7 +4643,7 @@ local function read_le_uint(data, offset, size)
     return result;
 end
 
-local function parse_action_packet(data)
+function parse_action_packet(data)
     if (type(data) ~= 'string' or data:byte(1) ~= 0x28) then
         return nil;
     end
@@ -4740,7 +4740,7 @@ function handle_cast_action_packet(data)
     end
 end
 
-local function handle_target_debuff_action_packet(data)
+function handle_target_debuff_action_packet(data)
     local action = parse_action_packet(data);
     local player_id = local_player_server_id();
     if (action == nil or player_id == nil or tonumber(action.actor_id) ~= player_id or tonumber(action.action_type) ~= 4) then
@@ -4763,7 +4763,7 @@ local function handle_target_debuff_action_packet(data)
     end
 end
 
-local function handle_target_debuff_message_packet(data)
+function handle_target_debuff_message_packet(data)
     if (type(data) ~= 'string') then
         return;
     end
@@ -4786,7 +4786,7 @@ local function handle_target_debuff_message_packet(data)
     end
 end
 
-local function handle_incoming_packet(e)
+function handle_incoming_packet(e)
     if (e == nil or e.blocked == true) then
         return;
     end
@@ -4802,7 +4802,7 @@ local function handle_incoming_packet(e)
     end
 end
 
-local function clean_event_message(message)
+function clean_event_message(message)
     local text = tostring(message or ''):gsub('\r', ' '):gsub('\n', ' '):gsub('%z', '');
     text = text:gsub('.', function (character)
         local value = character:byte();
@@ -4824,7 +4824,7 @@ local function clean_event_message(message)
     return clean_string(text);
 end
 
-local function current_party_contains_name(name)
+function current_party_contains_name(name)
     local target_key = observed_name_key(name);
     if (target_key == nil) then
         return false;
@@ -4851,7 +4851,7 @@ local function current_party_contains_name(name)
     return false;
 end
 
-local function set_observed_buff(name, key, enabled)
+function set_observed_buff(name, key, enabled)
     local name_key = observed_name_key(name);
     key = normalize_buff_key(key);
     if (name_key == nil or key == nil or buff_id_for_key(key) == nil or not current_party_contains_name(name)) then
@@ -4880,7 +4880,7 @@ local function set_observed_buff(name, key, enabled)
     return true;
 end
 
-local function observed_buff_event(text)
+function observed_buff_event(text)
     local name, buff = text:match('^(.-) gains the effect of (.-)%.?$');
     if (name ~= nil and buff ~= nil) then
         return name, buff, true;
@@ -4899,7 +4899,7 @@ local function observed_buff_event(text)
     return nil, nil, nil;
 end
 
-local function process_observed_buff_text(message)
+function process_observed_buff_text(message)
     local name, buff, enabled = observed_buff_event(clean_event_message(message));
     local key = buff_key_from_name(buff);
     if (name == nil or key == nil) then
@@ -5147,7 +5147,7 @@ function process_observed_text(message)
     return handled_buff or handled_debuff or handled_cast;
 end
 
-local function current_chat_log_path()
+function current_chat_log_path()
     local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
     local party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
     local character = party ~= nil and clean_string(safe_read(function () return party:GetMemberName(0); end, '')) or '';
@@ -5163,7 +5163,7 @@ local function current_chat_log_path()
     return ('%schatlogs\\%s_%s.log'):fmt(install_path, character, os.date('%Y.%m.%d'));
 end
 
-local function seed_observed_buffs_from_chat_log()
+function seed_observed_buffs_from_chat_log()
     local path = current_chat_log_path();
     if (path == nil) then
         return;
@@ -5202,7 +5202,7 @@ local function seed_observed_buffs_from_chat_log()
     state.observed_log_position = position;
 end
 
-local function poll_observed_buffs_from_chat_log()
+function poll_observed_buffs_from_chat_log()
     local now = os.time();
     if (state.observed_log_last_check == now) then
         return;
@@ -5245,7 +5245,7 @@ local function poll_observed_buffs_from_chat_log()
     file:close();
 end
 
-local function handle_text_in(e)
+function handle_text_in(e)
     local candidates = {
         e.message,
         e.message_modified,
@@ -5265,7 +5265,7 @@ local function handle_text_in(e)
     end
 end
 
-local function handle_command(e)
+function handle_command(e)
     local args = e.command:args();
     local name = clean_string(args[1]):lower();
 
