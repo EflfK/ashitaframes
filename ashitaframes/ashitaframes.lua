@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.29';
+addon.version   = '0.3.30';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -356,6 +356,10 @@ local WINDOW_FLAGS_BASE = flag(ImGuiWindowFlags_NoResize)
 local WINDOW_FLAGS_LOCKED = WINDOW_FLAGS_BASE
     + flag(ImGuiWindowFlags_NoTitleBar)
     + flag(ImGuiWindowFlags_NoMove);
+
+local WINDOW_PADDING_UNLOCKED = 8;
+local WINDOW_PADDING_LOCKED = 4;
+local WINDOW_TITLE_HEIGHT_FALLBACK = 22;
 
 local function clamp(value, min_value, max_value)
     value = tonumber(value) or min_value;
@@ -3291,6 +3295,44 @@ local function window_bg_color(locked, alpha)
     return apply_alpha(COLORS.panel_bg, alpha);
 end
 
+local function window_title_height()
+    local style = safe_read(function () return imgui.GetStyle(); end, nil);
+    local title_height = WINDOW_TITLE_HEIGHT_FALLBACK;
+
+    if (style ~= nil and style.FramePadding ~= nil) then
+        local frame_y = tonumber(style.FramePadding.y) or tonumber(style.FramePadding[2]);
+        local font_size = safe_read(function () return imgui.GetFontSize(); end, nil);
+        if (frame_y ~= nil and font_size ~= nil) then
+            title_height = font_size + (frame_y * 2);
+        end
+    end
+
+    return title_height;
+end
+
+local function locked_window_offset()
+    local pad_delta = WINDOW_PADDING_UNLOCKED - WINDOW_PADDING_LOCKED;
+    return pad_delta, window_title_height() + pad_delta;
+end
+
+local function display_window_position(x, y, locked)
+    if (locked == true) then
+        local offset_x, offset_y = locked_window_offset();
+        return x + offset_x, y + offset_y;
+    end
+
+    return x, y;
+end
+
+local function stored_window_position(x, y, locked)
+    if (locked == true) then
+        local offset_x, offset_y = locked_window_offset();
+        return x - offset_x, y - offset_y;
+    end
+
+    return x, y;
+end
+
 function draw_bar_fill(draw_list, x, y, width, height, percent, fill_color, alpha, rounding)
     percent = percent_value(percent);
     local fill_width = 0;
@@ -3676,10 +3718,11 @@ local function render_window(title, open_state, x, y, layout, units, position_ca
 
     local locked = settings.locked == true;
     local window_flags = locked and WINDOW_FLAGS_LOCKED or WINDOW_FLAGS_BASE;
-    local pad = locked and 4 or 8;
+    local pad = locked and WINDOW_PADDING_LOCKED or WINDOW_PADDING_UNLOCKED;
     local alpha = layout.opacity / 100;
+    local window_x, window_y = display_window_position(x, y, locked);
 
-    imgui.SetNextWindowPos({ x, y }, locked and ImGuiCond_Always or ImGuiCond_FirstUseEver);
+    imgui.SetNextWindowPos({ window_x, window_y }, ImGuiCond_Always);
     imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { pad, pad });
     imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, locked and 0.0 or 1.0);
     imgui.PushStyleColor(ImGuiCol_WindowBg, window_bg_color(locked, alpha));
@@ -3687,7 +3730,8 @@ local function render_window(title, open_state, x, y, layout, units, position_ca
 
     if (imgui.Begin(title, open_state, window_flags)) then
         local current_x, current_y = imgui.GetWindowPos();
-        position_callback(current_x, current_y);
+        local stored_x, stored_y = stored_window_position(current_x, current_y, locked);
+        position_callback(stored_x, stored_y);
 
         for _, unit in ipairs(units) do
             draw_unit_row(unit, layout, effective_row_height(unit, layout));
@@ -3719,7 +3763,7 @@ local function render_party_grid_window(title, open_state, x, y, layout, units, 
 
     local locked = settings.locked == true;
     local window_flags = locked and WINDOW_FLAGS_LOCKED or WINDOW_FLAGS_BASE;
-    local pad = locked and 4 or 8;
+    local pad = locked and WINDOW_PADDING_LOCKED or WINDOW_PADDING_UNLOCKED;
     local alpha = layout.opacity / 100;
     local columns, rows = party_grid_size(layout, #units);
     local row_height = layout.row_height;
@@ -3730,8 +3774,9 @@ local function render_party_grid_window(title, open_state, x, y, layout, units, 
     local gap = layout.row_gap;
     local total_width = (columns * layout.width) + ((columns - 1) * gap);
     local total_height = (rows * row_height) + ((rows - 1) * gap);
+    local window_x, window_y = display_window_position(x, y, locked);
 
-    imgui.SetNextWindowPos({ x, y }, locked and ImGuiCond_Always or ImGuiCond_FirstUseEver);
+    imgui.SetNextWindowPos({ window_x, window_y }, ImGuiCond_Always);
     imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { pad, pad });
     imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, locked and 0.0 or 1.0);
     imgui.PushStyleColor(ImGuiCol_WindowBg, window_bg_color(locked, alpha));
@@ -3739,7 +3784,8 @@ local function render_party_grid_window(title, open_state, x, y, layout, units, 
 
     if (imgui.Begin(title, open_state, window_flags)) then
         local current_x, current_y = imgui.GetWindowPos();
-        position_callback(current_x, current_y);
+        local stored_x, stored_y = stored_window_position(current_x, current_y, locked);
+        position_callback(stored_x, stored_y);
 
         local start_x, start_y = imgui.GetCursorScreenPos();
         for index, unit in ipairs(units) do
