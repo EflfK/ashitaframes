@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.32';
+addon.version   = '0.3.33';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -206,6 +206,13 @@ local COLORS = {
 
 local BUFF_ICON_SIZE = 54;
 local BUFF_ICON_GAP = 6;
+local BUFF_RAIL = {
+    width = 48,
+    icon_size = 22,
+    icon_gap = 5,
+    badge_width = 24,
+    badge_height = 18,
+};
 local OBSERVED_LOG_SEED_MAX_LINES = 12000;
 local BUFF_ICON_FILES = {
     protect = 'protect_1.png',
@@ -2189,7 +2196,27 @@ local function target_debuff_reminder_keys(unit)
     return result;
 end
 
-local function buff_icon_items(unit)
+local function missing_buff_icon_items(unit, active_keys)
+    local items = { };
+    active_keys = active_keys or active_buff_key_lookup(unit.buffs);
+
+    for _, key in ipairs(reminder_buff_keys(unit)) do
+        local definition = BUFF_DEFINITIONS[key];
+        local icon = definition ~= nil and load_buff_icon(definition.file) or nil;
+        if (definition ~= nil and active_keys[key] ~= true) then
+            table.insert(items, {
+                key = key,
+                name = definition.label,
+                handle = icon ~= nil and icon.handle or nil,
+                state = 'missing',
+            });
+        end
+    end
+
+    return items;
+end
+
+local function buff_icon_items(unit, missing_items)
     local items = { };
     if (type(unit.buffs) ~= 'table') then
         return items;
@@ -2197,6 +2224,7 @@ local function buff_icon_items(unit)
 
     local max_buffs = state.settings.max_buffs or DEFAULT_SETTINGS.max_buffs;
     local active_keys = active_buff_key_lookup(unit.buffs);
+    missing_items = missing_items or missing_buff_icon_items(unit, active_keys);
 
     for index = 1, #unit.buffs, 1 do
         if (#items >= max_buffs) then
@@ -2218,20 +2246,13 @@ local function buff_icon_items(unit)
         end
     end
 
-    for _, key in ipairs(reminder_buff_keys(unit)) do
+    for _, item in ipairs(missing_items) do
         if (#items >= max_buffs) then
             break;
         end
 
-        local definition = BUFF_DEFINITIONS[key];
-        local icon = definition ~= nil and load_buff_icon(definition.file) or nil;
-        if (icon ~= nil and active_keys[key] ~= true) then
-            table.insert(items, {
-                key = key,
-                name = definition.label,
-                handle = icon.handle,
-                state = 'missing',
-            });
+        if (item.handle ~= nil) then
+            table.insert(items, item);
         end
     end
 
@@ -3679,66 +3700,147 @@ local function unit_right_label(unit)
     return table.concat(pieces, ' ');
 end
 
-local function draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint)
-    local pad = 3;
+local function draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint, icon_size)
+    icon_size = tonumber(icon_size) or BUFF_ICON_SIZE;
+    local pad = icon_size >= 40 and 3 or 2;
     local min = { icon_x - pad, icon_y - pad };
-    local max = { icon_x + BUFF_ICON_SIZE + pad, icon_y + BUFF_ICON_SIZE + pad };
+    local max = { icon_x + icon_size + pad, icon_y + icon_size + pad };
 
     if (item.state == 'missing') then
         local pulse = (math.sin(os.clock() * 7.0) + 1.0) * 0.5;
         local pulse_alpha = alpha * (0.62 + (pulse * 0.38));
         local border_color = pulse > 0.5 and COLORS.buff_missing_flash or COLORS.buff_missing_border;
+        local border_width = icon_size >= 40 and 3.0 or 2.0;
 
         draw_list:AddRectFilled(min, max, color_u32(apply_alpha(COLORS.buff_missing_bg, pulse_alpha)), 4.0);
-        draw_list:AddRect(min, max, color_u32(apply_alpha(border_color, alpha)), 4.0, ImDrawCornerFlags_All, 3.0);
+        draw_list:AddRect(min, max, color_u32(apply_alpha(border_color, alpha)), 4.0, ImDrawCornerFlags_All, border_width);
     else
         draw_list:AddRectFilled(min, max, color_u32(apply_alpha(COLORS.shadow, alpha * 0.56)), 4.0);
         draw_list:AddRect(min, max, color_u32(apply_alpha(COLORS.buff_active_border, alpha)), 4.0, ImDrawCornerFlags_All, 1.0);
     end
 
     imgui.SetCursorScreenPos({ icon_x, icon_y });
-    imgui.Image(item.handle, { BUFF_ICON_SIZE, BUFF_ICON_SIZE }, { 0, 0 }, { 1, 1 }, tint, { 0, 0, 0, 0 });
+    imgui.Image(item.handle, { icon_size, icon_size }, { 0, 0 }, { 1, 1 }, tint, { 0, 0, 0, 0 });
 
     if (item.state == 'missing') then
         local mark_color = color_u32(apply_alpha(COLORS.buff_missing_border, alpha));
-        draw_list:AddLine({ icon_x + 7, icon_y + 7 }, { icon_x + BUFF_ICON_SIZE - 7, icon_y + BUFF_ICON_SIZE - 7 }, mark_color, 3.0);
-        draw_list:AddLine({ icon_x + BUFF_ICON_SIZE - 7, icon_y + 7 }, { icon_x + 7, icon_y + BUFF_ICON_SIZE - 7 }, mark_color, 3.0);
+        local mark_pad = math.max(4, math.floor(icon_size * 0.13));
+        local mark_width = icon_size >= 40 and 3.0 or 2.0;
+        draw_list:AddLine({ icon_x + mark_pad, icon_y + mark_pad }, { icon_x + icon_size - mark_pad, icon_y + icon_size - mark_pad }, mark_color, mark_width);
+        draw_list:AddLine({ icon_x + icon_size - mark_pad, icon_y + mark_pad }, { icon_x + mark_pad, icon_y + icon_size - mark_pad }, mark_color, mark_width);
     end
 end
 
-local function draw_buff_icon_row(unit, x, y, width, alpha)
+local function draw_buff_item_tooltip(item)
+    imgui.BeginTooltip();
+    if (item.state == 'missing') then
+        imgui.TextColored(COLORS.warning, ('Missing: %s'):fmt(item.name));
+    else
+        imgui.Text(item.name);
+    end
+    imgui.EndTooltip();
+end
+
+local function draw_missing_buff_tooltip(items)
+    imgui.BeginTooltip();
+    if (#items == 1) then
+        imgui.TextColored(COLORS.warning, ('Missing: %s'):fmt(items[1].name));
+    else
+        imgui.TextColored(COLORS.warning, ('Missing buffs: %d'):fmt(#items));
+        for _, item in ipairs(items) do
+            imgui.Text(('- %s'):fmt(item.name));
+        end
+    end
+    imgui.EndTooltip();
+end
+
+local function buff_rail_visible(unit, items, missing_items)
     if (not state.settings.show_buffs or unit.kind ~= 'party') then
+        return false;
+    end
+
+    return (#items > 0 or #missing_items > 0);
+end
+
+local function draw_buff_missing_badge(draw_list, x, y, alpha, items)
+    local count = #items;
+    if (count == 0) then
         return;
     end
 
-    local items = buff_icon_items(unit);
-    if (#items == 0) then
+    local label = tostring(count);
+    local min = { x, y };
+    local max = { x + BUFF_RAIL.badge_width, y + BUFF_RAIL.badge_height };
+
+    draw_list:AddRectFilled(min, max, color_u32(apply_alpha(COLORS.buff_missing_bg, alpha)), 4.0);
+    draw_list:AddRect(min, max, color_u32(apply_alpha(COLORS.buff_missing_border, alpha)), 4.0, ImDrawCornerFlags_All, 1.0);
+    draw_text(
+        draw_list,
+        x + math.max(1, math.floor((BUFF_RAIL.badge_width - calc_text_width(label)) / 2)),
+        y + math.max(1, math.floor((BUFF_RAIL.badge_height - text_line_height()) / 2)),
+        apply_alpha(COLORS.hp_text, alpha),
+        label,
+        true,
+        apply_alpha(COLORS.light_text_shadow, alpha));
+
+    imgui.SetCursorScreenPos({ x, y });
+    imgui.Dummy({ BUFF_RAIL.badge_width, BUFF_RAIL.badge_height });
+    if (imgui.IsItemHovered()) then
+        draw_missing_buff_tooltip(items);
+    end
+end
+
+local function draw_buff_icon_rail(unit, x, y, row_height, alpha, items, missing_items)
+    items = items or buff_icon_items(unit);
+    missing_items = missing_items or missing_buff_icon_items(unit);
+    if (not buff_rail_visible(unit, items, missing_items)) then
         return;
     end
 
     local draw_list = imgui.GetWindowDrawList();
     local tint = unit.dim and { 0.62, 0.62, 0.62, 0.62 } or { 1.00, 1.00, 1.00, 1.00 };
-    local icon_x = x + 8;
-    local icon_y = y + 24;
-    local max_x = x + width - 8;
+    local icon_x = x + math.floor((BUFF_RAIL.width - BUFF_RAIL.icon_size) / 2);
+    local icon_y = y + 8;
+    local badge_reserved = #missing_items > 0 and (BUFF_RAIL.badge_height + BUFF_RAIL.icon_gap) or 0;
+    local icon_bottom = y + row_height - 8 - badge_reserved;
+    local max_slots = math.max(1, math.floor(((icon_bottom - icon_y) + BUFF_RAIL.icon_gap) / (BUFF_RAIL.icon_size + BUFF_RAIL.icon_gap)));
+    local display_items = { };
+
+    draw_list:AddRectFilled({ x + 1, y + 1 }, { x + BUFF_RAIL.width - 1, y + row_height - 1 }, color_u32(apply_alpha(COLORS.shadow, alpha * 0.22)), 3.0);
+    draw_list:AddLine({ x + BUFF_RAIL.width - 1, y + 5 }, { x + BUFF_RAIL.width - 1, y + row_height - 5 }, color_u32(apply_alpha(COLORS.row_border, alpha * 0.75)), 1.0);
 
     for _, item in ipairs(items) do
-        if ((icon_x + BUFF_ICON_SIZE + 3) > max_x) then
+        if (item.state == 'missing' and item.handle ~= nil) then
+            table.insert(display_items, item);
+        end
+    end
+    for _, item in ipairs(items) do
+        if (item.state ~= 'missing' and item.handle ~= nil) then
+            table.insert(display_items, item);
+        end
+    end
+
+    for _, item in ipairs(display_items) do
+        if (max_slots <= 0) then
             break;
         end
 
-        draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint);
+        draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint, BUFF_RAIL.icon_size);
         if (imgui.IsItemHovered()) then
-            imgui.BeginTooltip();
-            if (item.state == 'missing') then
-                imgui.TextColored(COLORS.warning, ('Missing: %s'):fmt(item.name));
-            else
-                imgui.Text(item.name);
-            end
-            imgui.EndTooltip();
+            draw_buff_item_tooltip(item);
         end
 
-        icon_x = icon_x + BUFF_ICON_SIZE + BUFF_ICON_GAP;
+        icon_y = icon_y + BUFF_RAIL.icon_size + BUFF_RAIL.icon_gap;
+        max_slots = max_slots - 1;
+    end
+
+    if (#missing_items > 0) then
+        draw_buff_missing_badge(
+            draw_list,
+            x + math.floor((BUFF_RAIL.width - BUFF_RAIL.badge_width) / 2),
+            y + row_height - BUFF_RAIL.badge_height - 7,
+            alpha,
+            missing_items);
     end
 
     imgui.SetCursorScreenPos({ x, y });
@@ -3901,12 +4003,23 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
     local alpha = (layout.opacity / 100) * (unit.dim and 0.62 or 1.0);
     local row_bg = unit.dim and COLORS.row_dim or COLORS.row_bg;
     local border = unit.kind == 'target' and COLORS.row_border_active or COLORS.row_border;
+    local buff_missing_items = { };
+    local buff_items = { };
+    local buff_rail_width = 0;
+
+    if (state.settings.show_buffs and unit.kind == 'party') then
+        buff_missing_items = missing_buff_icon_items(unit);
+        buff_items = buff_icon_items(unit, buff_missing_items);
+        if (buff_rail_visible(unit, buff_items, buff_missing_items)) then
+            buff_rail_width = BUFF_RAIL.width;
+        end
+    end
 
     draw_list:AddRectFilled({ x, y }, { x + width, y + row_height }, color_u32(apply_alpha(row_bg, alpha)), 4.0);
-    draw_resource_bars(draw_list, unit, layout, x, y, width, row_height, alpha);
+    draw_resource_bars(draw_list, unit, layout, x + buff_rail_width, y, width - buff_rail_width, row_height, alpha);
     draw_list:AddRect({ x, y }, { x + width, y + row_height }, color_u32(apply_alpha(border, alpha)), 4.0, ImDrawCornerFlags_All, 1.0);
 
-    draw_buff_icon_row(unit, x, y, width, alpha);
+    draw_buff_icon_rail(unit, x, y, row_height, alpha, buff_items, buff_missing_items);
     draw_target_debuff_icon_row(unit, x, y, width, alpha);
 
     if (skip_spacing ~= true) then

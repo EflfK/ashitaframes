@@ -24,12 +24,14 @@ clean while important unit information remains visible elsewhere on screen.
   starts with resource cast-time estimates. Cast labels show the resolved
   spell/item name and append the observed target when available.
 - Shows compact party status icons for mapped buffs from Ashita status memory
-  when available, plus observed party effect messages for trusts. Protect and
+  when available, plus observed party effect messages for trusts. Buff icons
+  draw in a reserved left rail so HP/MP/TP/cast bars remain clear. Protect and
   Shell are mapped first.
-- Shows large missing-buff reminders for mapped buffs configured per current
-  player job. Missing reminders flash with a crossed icon; active buffs show
-  as normal icons. Trust reminders clear after observed gain messages and reset
-  on zoning or party changes, even if another chat addon modifies or hides the
+- Shows compact missing-buff reminders for mapped buffs configured per current
+  player job. Missing reminders flash with a crossed icon, and the rail count
+  badge shows a hover tooltip listing the missing buffs. Active buffs show as
+  normal icons. Trust reminders clear after observed gain messages and reset on
+  zoning or party changes, even if another chat addon modifies or hides the
   native incoming line. On load, recent current-zone effect messages seed the
   observed state, and a bounded live chat-log tail keeps trust buffs updated
   after reloads and new casts.
