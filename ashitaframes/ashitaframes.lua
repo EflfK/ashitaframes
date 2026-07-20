@@ -2804,17 +2804,41 @@ function entity_name_by_server_id(server_id)
     return '';
 end
 
+function localized_resource_name_value(name)
+    if (name == nil) then
+        return '';
+    end
+
+    if (type(name) == 'string') then
+        return clean_string(name);
+    end
+
+    if (type(name) == 'table') then
+        return clean_string(name[1] or name[2] or name[0] or name.en or name.English or '');
+    end
+
+    local indexed = safe_read(function () return name[1]; end, nil)
+        or safe_read(function () return name[2]; end, nil)
+        or safe_read(function () return name[0]; end, nil);
+    local resolved = clean_string(indexed);
+    if (#resolved > 0) then
+        return resolved;
+    end
+
+    local fallback = clean_string(name);
+    if (fallback:match('^userdata:%s*0x%x+$') ~= nil) then
+        return '';
+    end
+
+    return fallback;
+end
+
 function cast_resource_name(resource)
     if (resource == nil) then
         return '';
     end
 
-    local name = safe_read(function () return resource.Name; end, nil);
-    if (type(name) == 'table') then
-        return clean_string(name[1] or name[0] or name.en or name.English or '');
-    end
-
-    return clean_string(name);
+    return localized_resource_name_value(safe_read(function () return resource.Name; end, nil));
 end
 
 function cast_resource_id(resource)
@@ -2919,6 +2943,38 @@ function normalize_cast_actor_name(actor_name, actor_id)
     end
 
     return name;
+end
+
+function normalize_cast_target_name(target_name, target_id)
+    local name = clean_string(target_name);
+    if ((name == '' or name == 'You') and tonumber(target_id) ~= nil) then
+        local entity_name = entity_name_by_server_id(target_id);
+        if (#entity_name > 0) then
+            name = entity_name;
+        end
+    end
+    if (name == 'You') then
+        local player_name = current_player_name();
+        if (#player_name > 0) then
+            name = player_name;
+        end
+    end
+
+    return name;
+end
+
+function cast_display_label(label, target_name, target_id)
+    local cast_label = clean_string(label);
+    if (#cast_label == 0) then
+        cast_label = 'Casting';
+    end
+
+    local target_label = normalize_cast_target_name(target_name, target_id);
+    if (#target_label > 0) then
+        return ('%s on %s'):fmt(cast_label, target_label);
+    end
+
+    return cast_label;
 end
 
 function set_active_cast(actor_id, actor_name, label, duration, kind, resource_id)
@@ -4899,6 +4955,21 @@ function action_first_target_param(action)
     return nil;
 end
 
+function action_first_target_id(action)
+    if (type(action) ~= 'table') then
+        return nil;
+    end
+
+    for _, target in ipairs(action.targets or { }) do
+        local target_id = tonumber(target.id);
+        if (target_id ~= nil and target_id ~= 0) then
+            return target_id;
+        end
+    end
+
+    return nil;
+end
+
 function handle_cast_action_packet(data)
     local action = parse_action_packet(data);
     if (action == nil) then
@@ -4909,11 +4980,13 @@ function handle_cast_action_packet(data)
     local actor_id = tonumber(action.actor_id);
     if ((action_type == 8 or action_type == 9) and tonumber(action.param) == 0x6163) then
         local resource_id = action_first_target_param(action);
+        local target_id = action_first_target_id(action);
+        local target_name = entity_name_by_server_id(target_id);
         local info = action_type == 8 and spell_cast_info_by_id(resource_id) or item_cast_info_by_id(resource_id);
         if (info ~= nil) then
-            set_active_cast(actor_id, entity_name_by_server_id(actor_id), info.label, info.duration, info.kind, info.id);
+            set_active_cast(actor_id, entity_name_by_server_id(actor_id), cast_display_label(info.label, target_name, target_id), info.duration, info.kind, info.id);
         else
-            set_active_cast(actor_id, entity_name_by_server_id(actor_id), 'Casting', 3.0, action_type == 8 and 'spell' or 'item', resource_id);
+            set_active_cast(actor_id, entity_name_by_server_id(actor_id), cast_display_label('Casting', target_name, target_id), 3.0, action_type == 8 and 'spell' or 'item', resource_id);
         end
         return;
     end
@@ -5295,10 +5368,10 @@ function process_observed_cast_text(message)
     if (actor ~= nil and spell ~= nil) then
         local info = spell_cast_info_by_name(spell);
         if (info ~= nil) then
-            return set_active_cast(nil, actor, info.label, info.duration, info.kind, info.id);
+            return set_active_cast(nil, actor, cast_display_label(info.label, target), info.duration, info.kind, info.id);
         end
 
-        return set_active_cast(nil, actor, spell, 3.0, 'spell', nil);
+        return set_active_cast(nil, actor, cast_display_label(spell, target), 3.0, 'spell', nil);
     end
 
     actor = text:match("^(.-)'s casting is interrupted%.$");

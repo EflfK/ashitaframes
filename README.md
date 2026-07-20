@@ -21,7 +21,8 @@ clean while important unit information remains visible elsewhere on screen.
   same-zone dimming where Ashita exposes that data.
 - Shows configurable cast bars on self, party, pet, and target frames. The
   local player uses Ashita cast-bar memory; other units use observed cast
-  starts with resource cast-time estimates.
+  starts with resource cast-time estimates. Cast labels show the resolved
+  spell/item name and append the observed target when available.
 - Shows compact party status icons for mapped buffs from Ashita status memory
   when available, plus observed party effect messages for trusts. Protect and
   Shell are mapped first.
