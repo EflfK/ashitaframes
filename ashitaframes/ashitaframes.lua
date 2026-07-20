@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.30';
+addon.version   = '0.3.31';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -333,6 +333,7 @@ local state = {
     observed_log_position = 0,
     observed_log_last_check = 0,
     observed_log_events = 0,
+    window_lock_state = { },
     self_window_x = 36,
     self_window_y = 164,
     party_window_x = 36,
@@ -3333,6 +3334,22 @@ local function stored_window_position(x, y, locked)
     return x, y;
 end
 
+function frame_window_id(title)
+    return tostring(title or ''):match('###(.+)$') or tostring(title or '');
+end
+
+function frame_window_position_condition(title, locked)
+    local key = frame_window_id(title);
+    local was_locked = state.window_lock_state[key] == true;
+    state.window_lock_state[key] = locked == true;
+
+    if (locked == true or was_locked == true) then
+        return ImGuiCond_Always;
+    end
+
+    return ImGuiCond_FirstUseEver;
+end
+
 function draw_bar_fill(draw_list, x, y, width, height, percent, fill_color, alpha, rounding)
     percent = percent_value(percent);
     local fill_width = 0;
@@ -3721,8 +3738,9 @@ local function render_window(title, open_state, x, y, layout, units, position_ca
     local pad = locked and WINDOW_PADDING_LOCKED or WINDOW_PADDING_UNLOCKED;
     local alpha = layout.opacity / 100;
     local window_x, window_y = display_window_position(x, y, locked);
+    local position_condition = frame_window_position_condition(title, locked);
 
-    imgui.SetNextWindowPos({ window_x, window_y }, ImGuiCond_Always);
+    imgui.SetNextWindowPos({ window_x, window_y }, position_condition);
     imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { pad, pad });
     imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, locked and 0.0 or 1.0);
     imgui.PushStyleColor(ImGuiCol_WindowBg, window_bg_color(locked, alpha));
@@ -3775,8 +3793,9 @@ local function render_party_grid_window(title, open_state, x, y, layout, units, 
     local total_width = (columns * layout.width) + ((columns - 1) * gap);
     local total_height = (rows * row_height) + ((rows - 1) * gap);
     local window_x, window_y = display_window_position(x, y, locked);
+    local position_condition = frame_window_position_condition(title, locked);
 
-    imgui.SetNextWindowPos({ window_x, window_y }, ImGuiCond_Always);
+    imgui.SetNextWindowPos({ window_x, window_y }, position_condition);
     imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { pad, pad });
     imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, locked and 0.0 or 1.0);
     imgui.PushStyleColor(ImGuiCol_WindowBg, window_bg_color(locked, alpha));
