@@ -125,11 +125,12 @@ Use Save to write the current window layout and reminder settings to
 `Ashita/config/addons/ashitaframes/ashitaframes_config.lua`. If an older
 `Ashita/addons/ashitaframes/ashitaframes_config.lua` exists and the normal
 config file does not, AshitaFrames migrates the legacy file on load. Self,
-Party, Pet, and Target frame width, height, row gap, opacity, MP bar, TP bar,
-cast bar, and MP/TP/cast text thresholds are configured independently. HP text
-shows percent plus current/max when that data is available, and the HP bar fills
-the row background behind the frame's other information. Width controls allow
-frames up to 750 pixels wide. Party frame layout is also configured separately
+Party, Pet, and Target frame width, height, row gap, opacity, HP/MP/TP/cast bar
+heights, MP bar, TP bar, cast bar, and MP/TP/cast text thresholds are configured
+independently. HP, MP, TP, and cast text is drawn inside its own bar, and bar
+heights are clamped so they cannot be shorter than the current text height. HP
+text shows percent plus current/max when that data is available. Width controls
+allow frames up to 750 pixels wide. Party frame layout is also configured separately
 for total party sizes 1 through 6, including columns and rows for stacking party
 members into grids; while the configuration window is open, the party frame
 fills missing non-self rows with preview members for the selected size. Reminder
@@ -192,11 +193,19 @@ return {
         row_height = 56,
         row_gap = 5,
         opacity = 88,
+        hp_bar_height = 38,
+        mp_bar_height = 18,
+        tp_bar_height = 18,
+        cast_bar_height = 18,
         self_frame_width = 232,
         self_height = 56,
         self_row_height = 56,
         self_row_gap = 5,
         self_opacity = 88,
+        self_hp_bar_height = 38,
+        self_mp_bar_height = 18,
+        self_tp_bar_height = 18,
+        self_cast_bar_height = 18,
         self_show_mp = true,
         self_show_tp = true,
         self_show_cast = true,
@@ -208,6 +217,10 @@ return {
         party_row_height = 56,
         party_row_gap = 5,
         party_opacity = 88,
+        party_hp_bar_height = 38,
+        party_mp_bar_height = 18,
+        party_tp_bar_height = 18,
+        party_cast_bar_height = 18,
         party_show_mp = true,
         party_show_tp = true,
         party_show_cast = true,
@@ -227,6 +240,10 @@ return {
         pet_row_height = 56,
         pet_row_gap = 5,
         pet_opacity = 88,
+        pet_hp_bar_height = 38,
+        pet_mp_bar_height = 18,
+        pet_tp_bar_height = 18,
+        pet_cast_bar_height = 18,
         pet_show_mp = true,
         pet_show_tp = true,
         pet_show_cast = true,
@@ -238,6 +255,10 @@ return {
         target_row_height = 56,
         target_row_gap = 5,
         target_opacity = 88,
+        target_hp_bar_height = 38,
+        target_mp_bar_height = 18,
+        target_tp_bar_height = 18,
+        target_cast_bar_height = 18,
         target_show_mp = false,
         target_show_tp = false,
         target_show_cast = true,
@@ -274,7 +295,8 @@ return {
 ```
 
 The base `frame_width`, `height`, `row_height`, `row_gap`, `opacity`,
-`show_mp`, `show_tp`, `show_cast`, `mp_text_threshold`, `tp_text_threshold`, and
+`hp_bar_height`, `mp_bar_height`, `tp_bar_height`, `cast_bar_height`, `show_mp`,
+`show_tp`, `show_cast`, `mp_text_threshold`, `tp_text_threshold`, and
 `cast_text_threshold` keys are kept
 as fallbacks for older configs. New saves write separate `self_*`, `party_*`,
 `pet_*`, and `target_*` layout and bar values; party frame saves also write the
