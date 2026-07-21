@@ -60,6 +60,14 @@ foreach ($needle in @("addons/mobdb/data/", "Modifiers", "Immunities", "Drops", 
     }
 }
 
+if (-not $lua.Contains("draw_target_mobdb_overlay")) {
+    throw "Expected compact MobDB target overlay was not found."
+}
+
+if ($lua.Contains("draw_target_mobdb_panel")) {
+    throw "Intrusive standalone MobDB panel renderer must not be restored."
+}
+
 if (-not $configText.Contains("settings")) {
     throw "Config file must return a settings table."
 }

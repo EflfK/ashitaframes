@@ -21,7 +21,6 @@ return {
         show_target_debuffs = true,
         show_target_debuff_reminders = true,
         show_target_mobdb = true,
-        target_mobdb_layout = 'combat',
         hide_buff_reminders_in_towns = true,
         buff_reminder_suppressed_zone_ids = { },
         max_buffs = 8,

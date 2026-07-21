@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.4.0';
+addon.version   = '0.4.1';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -66,7 +66,6 @@ local DEFAULT_SETTINGS = {
     show_target_debuffs = true,
     show_target_debuff_reminders = true,
     show_target_mobdb = true,
-    target_mobdb_layout = 'combat',
     hide_buff_reminders_in_towns = true,
     buff_reminder_suppressed_zone_ids = { },
     max_buffs = 8,
@@ -1105,14 +1104,6 @@ local function overlay_settings(target, source)
     return target;
 end
 
-function normalize_mobdb_layout(value)
-    value = clean_string(value):lower();
-    if value == 'tactical' or value == 'dossier' then
-        return value;
-    end
-    return 'combat';
-end
-
 local function normalize_settings(settings)
     settings.visible = settings.visible ~= false;
     settings.locked = settings.locked == true;
@@ -1133,7 +1124,6 @@ local function normalize_settings(settings)
     settings.show_target_debuffs = settings.show_target_debuffs ~= false;
     settings.show_target_debuff_reminders = settings.show_target_debuff_reminders ~= false;
     settings.show_target_mobdb = settings.show_target_mobdb ~= false;
-    settings.target_mobdb_layout = normalize_mobdb_layout(settings.target_mobdb_layout);
     settings.hide_buff_reminders_in_towns = settings.hide_buff_reminders_in_towns ~= false;
 
     settings.self_window_x = clamp_int(settings.self_window_x, -2000, 4000);
@@ -3021,7 +3011,6 @@ local function config_text_from_settings(settings)
         ('        show_target_debuffs = %s,'):fmt(bool_text(settings.show_target_debuffs)),
         ('        show_target_debuff_reminders = %s,'):fmt(bool_text(settings.show_target_debuff_reminders)),
         ('        show_target_mobdb = %s,'):fmt(bool_text(settings.show_target_mobdb)),
-        ("        target_mobdb_layout = '%s',"):fmt(normalize_mobdb_layout(settings.target_mobdb_layout)),
         ('        hide_buff_reminders_in_towns = %s,'):fmt(bool_text(settings.hide_buff_reminders_in_towns)),
         ('        buff_reminder_suppressed_zone_ids = %s,'):fmt(zone_id_list_text(settings.buff_reminder_suppressed_zone_ids)),
         ('        max_buffs = %d,'):fmt(settings.max_buffs),
@@ -4527,11 +4516,11 @@ end
 
 function mobdb_icon_items(info)
     local result = { };
-    for _, flag_item in ipairs(info.flags or { }) do
-        table.insert(result, { icon = flag_item.icon, tooltip = flag_item.key });
-    end
     for _, modifier in ipairs(mobdb_join_lists(info.physical, info.magical)) do
         table.insert(result, { icon = modifier.icon, tooltip = ('%s %s'):fmt(modifier.key, mobdb_percent_text(modifier.percent)) });
+    end
+    for _, flag_item in ipairs(info.flags or { }) do
+        table.insert(result, { icon = flag_item.icon, tooltip = flag_item.key });
     end
     for _, immunity in ipairs(info.immunities or { }) do
         table.insert(result, { icon = immunity.icon, tooltip = ('Immune: %s'):fmt(immunity.key) });
@@ -4542,68 +4531,92 @@ function mobdb_icon_items(info)
     return result;
 end
 
-function draw_target_mobdb_panel(unit, layout)
+function draw_mobdb_dossier_tooltip(info, width)
+    imgui.BeginTooltip();
+    imgui.TextColored(COLORS.accent, ('MobDB · Lv%s%s'):fmt(
+        clean_string(info.level),
+        #clean_string(info.job) > 0 and (' ' .. clean_string(info.job)) or ''));
+    imgui.Separator();
+    for _, line in ipairs(mobdb_info_lines(info, 'dossier', math.min(width, 480))) do
+        imgui.Text(line);
+    end
+    imgui.EndTooltip();
+end
+
+function draw_target_mobdb_overlay(unit, x, y, width, row_height, alpha, left_inset, right_inset)
     local info = unit ~= nil and unit.mobdb or nil;
     if (not state.settings.show_target_mobdb or type(info) ~= 'table') then
         return;
     end
 
-    local mode = normalize_mobdb_layout(state.settings.target_mobdb_layout);
-    local x, y = imgui.GetCursorScreenPos();
-    local width = layout.width;
-    local alpha = layout.opacity / 100;
-    local padding = 7;
-    local icon_size = 18;
-    local icon_gap = 4;
-    local icon_items = mobdb_icon_items(info);
-    local icons_per_row = math.max(1, math.floor((width - (padding * 2) + icon_gap) / (icon_size + icon_gap)));
-    local icon_rows = math.ceil(#icon_items / icons_per_row);
-    local icon_height = icon_rows > 0 and ((icon_rows * icon_size) + ((icon_rows - 1) * icon_gap) + 5) or 0;
-    local lines = mobdb_info_lines(info, mode, width);
-    local line_height = text_line_height() + 3;
-    local height = (padding * 2) + icon_height + (#lines * line_height);
     local draw_list = imgui.GetWindowDrawList();
+    local icon_size = 18;
+    local icon_gap = 3;
+    local padding = 4;
+    local trigger_width = 27;
+    local overlay_x = x + left_inset + 7;
+    local overlay_y = y + row_height - icon_size - 7;
+    local overlay_width = math.max(0, width - left_inset - right_inset - 104);
+    if (overlay_width < trigger_width) then
+        return;
+    end
 
-    draw_list:AddRectFilled({ x, y }, { x + width, y + height }, color_u32(apply_alpha(COLORS.row_bg, alpha * 0.96)), 4.0);
-    draw_list:AddRect({ x, y }, { x + width, y + height }, color_u32(apply_alpha(COLORS.row_border_active, alpha * 0.78)), 4.0, ImDrawCornerFlags_All, 1.0);
+    local source_items = mobdb_icon_items(info);
+    local max_icons = math.max(0, math.floor((overlay_width - trigger_width - padding - icon_gap) / (icon_size + icon_gap)));
+    local visible_icons = math.min(#source_items, max_icons);
+    local content_width = trigger_width + padding + (visible_icons * (icon_size + icon_gap));
+    if (visible_icons > 0) then content_width = content_width - icon_gap; end
 
-    local icon_x = x + padding;
-    local icon_y = y + padding;
-    for index, item in ipairs(icon_items) do
+    draw_list:AddRectFilled(
+        { overlay_x, overlay_y - 2 },
+        { overlay_x + content_width, overlay_y + icon_size + 2 },
+        color_u32(apply_alpha(COLORS.shadow, alpha * 0.72)),
+        4.0);
+
+    local icon_x = overlay_x + padding;
+    for index = 1, visible_icons, 1 do
+        local item = source_items[index];
         local icon = load_mobdb_icon(item.icon);
         if (icon ~= nil) then
-            imgui.SetCursorScreenPos({ icon_x, icon_y });
+            imgui.SetCursorScreenPos({ icon_x, overlay_y });
             imgui.Image(icon.handle, { icon_size, icon_size }, { 0, 0 }, { 1, 1 }, { 1, 1, 1, alpha }, { 0, 0, 0, 0 });
             if (imgui.IsItemHovered()) then
                 imgui.BeginTooltip();
                 imgui.Text(item.tooltip);
                 imgui.EndTooltip();
             end
-        else
-            draw_text(draw_list, icon_x + 2, icon_y + 1, apply_alpha(COLORS.text_muted, alpha), '?', true, apply_alpha(COLORS.shadow, alpha));
         end
-        if ((index % icons_per_row) == 0) then
-            icon_x = x + padding;
-            icon_y = icon_y + icon_size + icon_gap;
-        else
-            icon_x = icon_x + icon_size + icon_gap;
-        end
+        icon_x = icon_x + icon_size + icon_gap;
     end
 
-    local text_y = y + padding + icon_height;
-    for index, line in ipairs(lines) do
-        local color = COLORS.text;
-        if (line:find('^Weak:', 1, false) ~= nil) then color = COLORS.accent; end
-        if (line:find('^Resist:', 1, false) ~= nil) then color = COLORS.warning; end
-        draw_text(draw_list, x + padding, text_y, apply_alpha(color, alpha), line, true, apply_alpha(COLORS.shadow, alpha));
-        text_y = text_y + line_height;
-        if (index < #lines) then
-            draw_list:AddLine({ x + padding, text_y - 2 }, { x + width - padding, text_y - 2 }, color_u32(apply_alpha(COLORS.row_border, alpha * 0.34)), 1.0);
-        end
+    local hidden_count = #source_items - visible_icons;
+    local trigger_x = overlay_x + content_width - trigger_width;
+    draw_list:AddRectFilled(
+        { trigger_x + 2, overlay_y + 1 },
+        { trigger_x + trigger_width - 2, overlay_y + icon_size - 1 },
+        color_u32(apply_alpha(COLORS.panel_bg, alpha * 0.94)),
+        8.0);
+    draw_list:AddRect(
+        { trigger_x + 2, overlay_y + 1 },
+        { trigger_x + trigger_width - 2, overlay_y + icon_size - 1 },
+        color_u32(apply_alpha(COLORS.row_border_active, alpha)),
+        8.0,
+        ImDrawCornerFlags_All,
+        1.0);
+    local trigger_label = hidden_count > 0 and ('+' .. hidden_count) or 'i';
+    draw_text(
+        draw_list,
+        trigger_x + math.max(3, math.floor((trigger_width - calc_text_width(trigger_label)) / 2)),
+        overlay_y + 1,
+        apply_alpha(COLORS.hp_text, alpha),
+        trigger_label,
+        true,
+        apply_alpha(COLORS.shadow, alpha));
+    imgui.SetCursorScreenPos({ trigger_x, overlay_y });
+    imgui.Dummy({ trigger_width, icon_size });
+    if (imgui.IsItemHovered()) then
+        draw_mobdb_dossier_tooltip(info, width);
     end
-
-    imgui.SetCursorScreenPos({ x, y });
-    imgui.Dummy({ width, height + layout.row_gap });
 end
 
 local function draw_unit_row(unit, layout, row_height, skip_spacing)
@@ -4644,6 +4657,9 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
     draw_buff_icon_rail(unit, x, y, row_height, alpha, buff_items, buff_missing_items);
     draw_target_buff_icon_rail(unit, x, y, row_height, alpha, target_buff_items);
     draw_target_debuff_icon_rail(unit, x + width - BUFF_RAIL.width, y, row_height, alpha, target_debuff_items);
+    if (unit.kind == 'target') then
+        draw_target_mobdb_overlay(unit, x, y, width, row_height, alpha, buff_rail_width, debuff_rail_width);
+    end
 
     if (skip_spacing ~= true) then
         imgui.Dummy({ width, row_height + layout.row_gap });
@@ -4663,7 +4679,7 @@ local function effective_row_height(unit, layout)
     return row_height;
 end
 
-local function render_window(title, open_state, x, y, layout, units, position_callback, after_rows)
+local function render_window(title, open_state, x, y, layout, units, position_callback)
     local settings = state.settings;
     if (#units == 0) then
         return;
@@ -4689,9 +4705,6 @@ local function render_window(title, open_state, x, y, layout, units, position_ca
 
         for _, unit in ipairs(units) do
             draw_unit_row(unit, layout, effective_row_height(unit, layout));
-        end
-        if (after_rows ~= nil) then
-            after_rows(units, layout);
         end
     end
 
@@ -4782,9 +4795,6 @@ local function render_target()
         function (x, y)
             state.target_window_x = math.floor(x + 0.5);
             state.target_window_y = math.floor(y + 0.5);
-        end,
-        function (units, layout)
-            draw_target_mobdb_panel(units[1], layout);
         end);
 end
 
@@ -5124,13 +5134,7 @@ function render_target_frame_config_tab()
     end
 
     if (state.settings.show_target_mobdb) then
-        local layout = normalize_mobdb_layout(state.settings.target_mobdb_layout);
-        local display = ({ combat = 'Combat Strip', tactical = 'Tactical Matrix', dossier = 'Full Dossier' })[layout];
-        if (imgui.Button(('MobDB Layout: %s##ashitaframes_target_mobdb_layout'):fmt(display))) then
-            state.settings.target_mobdb_layout = layout == 'combat' and 'tactical' or (layout == 'tactical' and 'dossier' or 'combat');
-            mark_config_changed();
-        end
-        imgui.TextColored(COLORS.text_muted, 'Click to cycle layouts. Reads the installed MobDB zone data.');
+        imgui.TextColored(COLORS.text_muted, 'Compact icon ribbon; hover +N/i for the full dossier.');
     end
 
     imgui.Separator();

@@ -16,10 +16,9 @@ clean while important unit information remains visible elsewhere on screen.
   elemental modifiers, status immunities/resistances, respawn information,
   drops, spells, notes, position/direction/speed, entity IDs, and static/custom
   identity without requiring the MobDB addon itself to be loaded.
-- Provides three selectable MobDB target layouts: Combat Strip for concise
-  weaknesses and threat cues, Tactical Matrix for the full resistance grid,
-  and Full Dossier for every available MobDB field. Hover the icons for their
-  exact meanings and modifier values.
+- Keeps MobDB intelligence inside the existing target frame with a compact icon
+  ribbon that adds no frame height. Hover an icon for its exact meaning and
+  modifier value; hover the final `i` or `+N` marker for the complete dossier.
 - Draws a draggable self frame for the local player.
 - Draws draggable party frames for party members other than yourself, with
   optional alliance slots. Trust slots that linger in Ashita memory after
@@ -135,9 +134,8 @@ Target tabs. The Self, Party, Pet, and Target tabs each include that frame's
 persisted on/off toggle (`show_self`, `show_party`, `show_pet`, or
 `show_target`) plus its layout controls. The Party tab includes Protect/Shell
 reminders. The Target tab includes Dia, Paralyze, and Slow reminders plus the
-MobDB integration toggle and a button that cycles Combat Strip, Tactical
-Matrix, and Full Dossier layouts. AshitaFrames reads MobDB's installed zone
-data and icons; `/addon load mobdb` is not required.
+MobDB integration toggle. AshitaFrames reads MobDB's installed zone data and
+icons; `/addon load mobdb` is not required.
 Use Save to write the current window layout and reminder settings to
 `Ashita/config/addons/ashitaframes/ashitaframes_config.lua`. If an older
 `Ashita/addons/ashitaframes/ashitaframes_config.lua` exists and the normal
@@ -191,7 +189,6 @@ return {
         show_target_debuffs = true,
         show_target_debuff_reminders = true,
         show_target_mobdb = true,
-        target_mobdb_layout = 'combat',
         hide_buff_reminders_in_towns = true,
         buff_reminder_suppressed_zone_ids = { },
         max_buffs = 8,
