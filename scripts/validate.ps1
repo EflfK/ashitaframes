@@ -78,6 +78,16 @@ if (-not $lua.Contains("imgui.TextUnformatted(line)")) {
     throw "Expected safe unformatted MobDB dossier text rendering was not found."
 }
 
+foreach ($developerLine in @("mobdb_append_wrapped(lines, 'Identity'", "mobdb_append_wrapped(lines, 'Position'")) {
+    if ($lua.Contains($developerLine)) {
+        throw "MobDB dossier must not expose developer data: $developerLine"
+    }
+}
+
+if (-not $mobdbLua.Contains("fallback:match('^userdata:%s*0x%x+$')")) {
+    throw "Expected MobDB userdata name filtering was not found."
+}
+
 if (-not $configText.Contains("settings")) {
     throw "Config file must return a settings table."
 }

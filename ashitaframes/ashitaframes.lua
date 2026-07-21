@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.4.2';
+addon.version   = '0.4.3';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -4494,23 +4494,27 @@ function mobdb_info_lines(info, mode, width)
         return lines;
     end
 
-    local id_text = ('Index %d [0x%X]  ID %d [0x%08X]  %s'):fmt(
-        tonumber(info.index) or 0,
-        tonumber(info.index) or 0,
-        tonumber(info.server_id) or 0,
-        tonumber(info.server_id) or 0,
-        info.custom and 'Custom mob' or 'Static mob');
-    mobdb_append_wrapped(lines, 'Identity', id_text, line_width);
-    mobdb_append_wrapped(lines, 'Position', ('%s  %s  %s'):fmt(info.position or 'Unknown', info.direction or 'Unknown', info.speed or 'Unknown'), line_width);
+    local weak_text = mobdb_modifier_text(all_modifiers, function (value) return value > 0; end);
+    local resist_text = mobdb_modifier_text(all_modifiers, function (value) return value < 0; end);
     mobdb_append_wrapped(lines, 'Behavior', mobdb_names_text(info.flags), line_width);
-    mobdb_append_wrapped(lines, 'Physical', mobdb_modifier_text(info.physical_all), line_width);
-    mobdb_append_wrapped(lines, 'Elements', mobdb_modifier_text(info.magical_all), line_width);
-    mobdb_append_wrapped(lines, 'Immunities', mobdb_names_text(info.immunities), line_width);
-    mobdb_append_wrapped(lines, 'Status resist', mobdb_modifier_text(info.status_resistances), line_width);
+    if (weak_text ~= 'None') then mobdb_append_wrapped(lines, 'Weak', weak_text, line_width); end
+    if (resist_text ~= 'None') then mobdb_append_wrapped(lines, 'Resist', resist_text, line_width); end
+    if (#(info.immunities or { }) > 0) then
+        mobdb_append_wrapped(lines, 'Immunities', mobdb_names_text(info.immunities), line_width);
+    end
+    if (#(info.status_resistances or { }) > 0) then
+        mobdb_append_wrapped(lines, 'Status resist', mobdb_modifier_text(info.status_resistances), line_width);
+    end
     mobdb_append_wrapped(lines, 'Respawn', info.respawn or 'Unknown', line_width);
-    mobdb_append_wrapped(lines, 'Drops', #(info.drops or { }) > 0 and table.concat(info.drops, ', ') or 'None recorded', line_width);
-    mobdb_append_wrapped(lines, 'Spells', #(info.spells or { }) > 0 and table.concat(info.spells, ', ') or 'None recorded', line_width);
-    mobdb_append_wrapped(lines, 'Notes', #(info.notes or { }) > 0 and table.concat(info.notes, ' | ') or 'None', line_width);
+    if (#(info.drops or { }) > 0) then
+        mobdb_append_wrapped(lines, 'Drops', table.concat(info.drops, ', '), line_width);
+    end
+    if (#(info.spells or { }) > 0) then
+        mobdb_append_wrapped(lines, 'Spells', table.concat(info.spells, ', '), line_width);
+    end
+    if (#(info.notes or { }) > 0) then
+        mobdb_append_wrapped(lines, 'Notes', table.concat(info.notes, ' | '), line_width);
+    end
     return lines;
 end
 

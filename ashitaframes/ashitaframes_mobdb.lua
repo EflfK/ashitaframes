@@ -54,10 +54,31 @@ local function value_name(resource)
     if resource == nil then
         return '';
     end
-    if type(resource.Name) == 'table' then
-        return clean_string(resource.Name[1]);
+
+    local value = safe_read(function () return resource.Name; end, nil);
+    if type(value) == 'string' then
+        return clean_string(value);
     end
-    return clean_string(resource.Name);
+    if type(value) == 'table' then
+        return clean_string(value[1] or value[2] or value[0] or value.en or value.English or '');
+    end
+
+    -- Ashita resource names are commonly indexable userdata rather than Lua
+    -- tables. Resolve the localized string instead of stringifying the
+    -- userdata container into an implementation address.
+    local indexed = safe_read(function () return value[1]; end, nil)
+        or safe_read(function () return value[2]; end, nil)
+        or safe_read(function () return value[0]; end, nil);
+    local name = clean_string(indexed);
+    if (#name > 0) then
+        return name;
+    end
+
+    local fallback = clean_string(value);
+    if (fallback:match('^userdata:%s*0x%x+$') ~= nil) then
+        return '';
+    end
+    return fallback;
 end
 
 local function resolve_job_name(resources, job_id)
@@ -83,11 +104,16 @@ end
 
 local function sorted_resource_names(resources, values, resolver)
     local result = { };
+    local seen = { };
     if type(values) ~= 'table' then
         return result;
     end
     for _, value in ipairs(values) do
-        table.insert(result, resolver(resources, value));
+        local name = clean_string(resolver(resources, value));
+        if (#name > 0 and name:match('^userdata:%s*0x%x+$') == nil and not seen[name]) then
+            seen[name] = true;
+            table.insert(result, name);
+        end
     end
     table.sort(result);
     return result;

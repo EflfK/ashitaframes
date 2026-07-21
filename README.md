@@ -18,7 +18,9 @@ clean while important unit information remains visible elsewhere on screen.
   identity without requiring the MobDB addon itself to be loaded.
 - Keeps MobDB intelligence inside the existing target frame with a compact icon
   ribbon that adds no frame height. Hover an icon for its exact meaning and
-  modifier value; hover the final `i` or `+N` marker for the complete dossier.
+  modifier value; hover the final `i` or `+N` marker for a player-facing dossier
+  that omits internal entity IDs, coordinates, movement data, neutral modifiers,
+  and empty sections.
 - Draws a draggable self frame for the local player.
 - Draws draggable party frames for party members other than yourself, with
   optional alliance slots. Trust slots that linger in Ashita memory after
