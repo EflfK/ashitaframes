@@ -119,6 +119,27 @@ local function sorted_resource_names(resources, values, resolver)
     return result;
 end
 
+local function sorted_item_entries(resources, values)
+    local result = { };
+    local seen = { };
+    if type(values) ~= 'table' then
+        return result;
+    end
+    for _, value in ipairs(values) do
+        local item_id = tonumber(value);
+        local name = clean_string(resolve_item_name(resources, item_id));
+        if (item_id ~= nil and item_id > 0 and #name > 0 and not seen[item_id]) then
+            seen[item_id] = true;
+            table.insert(result, { id = item_id, name = name });
+        end
+    end
+    table.sort(result, function (left, right)
+        if left.name == right.name then return left.id < right.id; end
+        return left.name < right.name;
+    end);
+    return result;
+end
+
 local function modifiers(resource, order, include_neutral)
     local result = { };
     local values = type(resource.Modifiers) == 'table' and resource.Modifiers or { };
@@ -339,7 +360,7 @@ function bridge:snapshot(zone_id, target_index, target_name, server_id)
         magical_all = modifiers(resource, MAGICAL_ORDER, true),
         status_resistances = status_resistances(resource),
         immunities = immunities(resource),
-        drops = resources ~= nil and sorted_resource_names(resources, resource.Drops, resolve_item_name) or { },
+        drops = resources ~= nil and sorted_item_entries(resources, resource.Drops) or { },
         spells = resources ~= nil and sorted_resource_names(resources, resource.Spells, resolve_spell_name) or { },
         notes = notes,
         position = entity ~= nil and position(entity, target_index) or 'Unknown',

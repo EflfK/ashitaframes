@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.4.3';
+addon.version   = '0.5.0';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -204,6 +204,10 @@ local COLORS = {
     buff_missing_bg = { 0.70, 0.05, 0.03, 0.76 },
     buff_missing_border = { 1.00, 0.10, 0.05, 1.00 },
     buff_missing_flash = { 1.00, 0.94, 0.18, 1.00 },
+    mobdb_weak_bg = { 0.02, 0.18, 0.28, 0.88 },
+    mobdb_weak_border = { 0.20, 0.82, 1.00, 0.92 },
+    mobdb_strong_bg = { 0.30, 0.07, 0.05, 0.88 },
+    mobdb_strong_border = { 1.00, 0.42, 0.24, 0.92 },
 };
 
 local BUFF_ICON_SIZE = 54;
@@ -358,6 +362,7 @@ local state = {
     buff_icon_cache = { },
     status_icon_cache = { },
     mobdb_icon_cache = { },
+    item_icon_cache = { },
     observed_buffs = { },
     observed_target_buffs = { },
     observed_target_buff_names = { },
@@ -2066,6 +2071,59 @@ function load_mobdb_icon(icon_name)
         handle = tonumber(ffi.cast('uint32_t', texture)),
     };
     state.mobdb_icon_cache[icon_name] = icon;
+    return icon;
+end
+
+function load_item_icon(item_id)
+    item_id = tonumber(item_id);
+    if (item_id == nil or item_id <= 0 or state.item_icon_cache[item_id] == false) then
+        return nil;
+    end
+    if (state.item_icon_cache[item_id] ~= nil) then
+        return state.item_icon_cache[item_id];
+    end
+
+    local device = ensure_d3d_device();
+    local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
+    local resource = resources ~= nil and safe_read(function () return resources:GetItemById(item_id); end, nil) or nil;
+    local image_size = resource ~= nil and tonumber(safe_read(function () return resource.ImageSize; end, nil)) or nil;
+    local bitmap = resource ~= nil and safe_read(function () return resource.Bitmap; end, nil) or nil;
+    if (device == nil or bitmap == nil or image_size == nil or image_size <= 0) then
+        state.item_icon_cache[item_id] = false;
+        return nil;
+    end
+
+    local texture_ptr = ffi.new('IDirect3DTexture8*[1]');
+    local result = safe_read(function ()
+        return ffi.C.D3DXCreateTextureFromFileInMemoryEx(
+            device,
+            bitmap,
+            image_size,
+            0xFFFFFFFF,
+            0xFFFFFFFF,
+            1,
+            0,
+            ffi.C.D3DFMT_A8R8G8B8,
+            ffi.C.D3DPOOL_MANAGED,
+            ffi.C.D3DX_DEFAULT,
+            ffi.C.D3DX_DEFAULT,
+            0xFF000000,
+            nil,
+            nil,
+            texture_ptr);
+    end, nil);
+
+    if (result ~= 0 or texture_ptr[0] == nil) then
+        state.item_icon_cache[item_id] = false;
+        return nil;
+    end
+
+    local texture = d3d8.gc_safe_release(ffi.cast('IDirect3DTexture8*', texture_ptr[0]));
+    local icon = {
+        texture = texture,
+        handle = tonumber(ffi.cast('uint32_t', texture)),
+    };
+    state.item_icon_cache[item_id] = icon;
     return icon;
 end
 
@@ -4409,33 +4467,6 @@ function draw_resource_bars(draw_list, unit, layout, x, y, width, height, alpha)
     end
 end
 
-function mobdb_percent_text(percent)
-    percent = tonumber(percent) or 0;
-    if math.abs(percent) < 0.005 then
-        return '0%';
-    end
-    local text = string.format('%+.2f', percent):gsub('0+$', ''):gsub('%.$', '');
-    return text .. '%';
-end
-
-function mobdb_modifier_text(items, predicate)
-    local pieces = { };
-    for _, item in ipairs(items or { }) do
-        if predicate == nil or predicate(item.percent) then
-            table.insert(pieces, ('%s %s'):fmt(item.key, mobdb_percent_text(item.percent)));
-        end
-    end
-    return #pieces > 0 and table.concat(pieces, '  ') or 'None';
-end
-
-function mobdb_names_text(items)
-    local pieces = { };
-    for _, item in ipairs(items or { }) do
-        table.insert(pieces, clean_string(item.key or item));
-    end
-    return #pieces > 0 and table.concat(pieces, '  ') or 'None';
-end
-
 function mobdb_join_lists(first, second)
     local result = { };
     for _, item in ipairs(first or { }) do table.insert(result, item); end
@@ -4443,112 +4474,97 @@ function mobdb_join_lists(first, second)
     return result;
 end
 
-function mobdb_wrapped_lines(text, width)
-    local result = { };
-    local current = '';
-    width = math.max(80, width);
-    for word in clean_string(text):gmatch('%S+') do
-        local candidate = #current > 0 and (current .. ' ' .. word) or word;
-        if (#current > 0 and calc_text_width(candidate) > width) then
-            table.insert(result, current);
-            current = word;
-        else
-            current = candidate;
+function mobdb_absolute_percent_text(percent)
+    local text = string.format('%.2f', math.abs(tonumber(percent) or 0)):gsub('0+$', ''):gsub('%.$', '');
+    return text;
+end
+
+function mobdb_modifier_groups(info)
+    local weak = { };
+    local strong = { };
+    for _, modifier in ipairs(mobdb_join_lists(info.physical, info.magical)) do
+        if (tonumber(modifier.percent) or 0) > 0 then
+            table.insert(weak, modifier);
+        elseif (tonumber(modifier.percent) or 0) < 0 then
+            table.insert(strong, modifier);
         end
     end
-    if (#current > 0) then table.insert(result, current); end
-    if (#result == 0) then table.insert(result, ''); end
-    return result;
+    local function effectiveness(left, right)
+        local left_percent = tonumber(left.percent) or 0;
+        local right_percent = tonumber(right.percent) or 0;
+        if (left_percent == right_percent) then return clean_string(left.key) < clean_string(right.key); end
+        return left_percent > right_percent;
+    end
+    table.sort(weak, effectiveness);
+    table.sort(strong, effectiveness);
+    return weak, strong;
 end
 
-function mobdb_append_wrapped(lines, label, text, width)
-    local prefix = #clean_string(label) > 0 and (label .. ': ') or '';
-    for _, line in ipairs(mobdb_wrapped_lines(prefix .. clean_string(text), width)) do
-        table.insert(lines, line);
-    end
+function mobdb_modifier_tile_width(modifier, icon_size)
+    return icon_size + 3 + calc_text_width(mobdb_absolute_percent_text(modifier.percent)) + 8;
 end
 
-function mobdb_info_lines(info, mode, width)
-    local lines = { };
-    local physical = info.physical or { };
-    local magical = info.magical or { };
-    local all_modifiers = mobdb_join_lists(physical, magical);
-    local line_width = math.max(90, width - 18);
-
-    if (mode == 'combat') then
-        mobdb_append_wrapped(lines, 'Weak', mobdb_modifier_text(all_modifiers, function (value) return value > 0; end), line_width);
-        mobdb_append_wrapped(lines, 'Resist', mobdb_modifier_text(all_modifiers, function (value) return value < 0; end), line_width);
-        mobdb_append_wrapped(lines, 'Flags', mobdb_names_text(info.flags), line_width);
-        mobdb_append_wrapped(lines, 'Immune', mobdb_names_text(info.immunities), line_width);
-        mobdb_append_wrapped(lines, 'Intel', ('%d drops  %d spells  Respawn %s'):fmt(#(info.drops or { }), #(info.spells or { }), info.respawn or 'Unknown'), line_width);
-        return lines;
+function mobdb_group_width(items, icon_size, gap)
+    local width = 0;
+    for _, item in ipairs(items or { }) do
+        if (width > 0) then width = width + gap; end
+        width = width + mobdb_modifier_tile_width(item, icon_size);
     end
-
-    if (mode == 'tactical') then
-        mobdb_append_wrapped(lines, 'Physical', mobdb_modifier_text(info.physical_all), line_width);
-        mobdb_append_wrapped(lines, 'Elements', mobdb_modifier_text(info.magical_all), line_width);
-        mobdb_append_wrapped(lines, 'Flags', mobdb_names_text(info.flags), line_width);
-        mobdb_append_wrapped(lines, 'Immunities', mobdb_names_text(info.immunities), line_width);
-        mobdb_append_wrapped(lines, 'Status resist', mobdb_modifier_text(info.status_resistances), line_width);
-        mobdb_append_wrapped(lines, 'Intel', ('%d drops  %d spells  Respawn %s  %s'):fmt(#(info.drops or { }), #(info.spells or { }), info.respawn or 'Unknown', info.custom and 'Custom mob' or 'Static mob'), line_width);
-        return lines;
-    end
-
-    local weak_text = mobdb_modifier_text(all_modifiers, function (value) return value > 0; end);
-    local resist_text = mobdb_modifier_text(all_modifiers, function (value) return value < 0; end);
-    mobdb_append_wrapped(lines, 'Behavior', mobdb_names_text(info.flags), line_width);
-    if (weak_text ~= 'None') then mobdb_append_wrapped(lines, 'Weak', weak_text, line_width); end
-    if (resist_text ~= 'None') then mobdb_append_wrapped(lines, 'Resist', resist_text, line_width); end
-    if (#(info.immunities or { }) > 0) then
-        mobdb_append_wrapped(lines, 'Immunities', mobdb_names_text(info.immunities), line_width);
-    end
-    if (#(info.status_resistances or { }) > 0) then
-        mobdb_append_wrapped(lines, 'Status resist', mobdb_modifier_text(info.status_resistances), line_width);
-    end
-    mobdb_append_wrapped(lines, 'Respawn', info.respawn or 'Unknown', line_width);
-    if (#(info.drops or { }) > 0) then
-        mobdb_append_wrapped(lines, 'Drops', table.concat(info.drops, ', '), line_width);
-    end
-    if (#(info.spells or { }) > 0) then
-        mobdb_append_wrapped(lines, 'Spells', table.concat(info.spells, ', '), line_width);
-    end
-    if (#(info.notes or { }) > 0) then
-        mobdb_append_wrapped(lines, 'Notes', table.concat(info.notes, ' | '), line_width);
-    end
-    return lines;
+    return width;
 end
 
-function mobdb_icon_items(info)
-    local result = { };
-    for _, modifier in ipairs(mobdb_join_lists(info.physical, info.magical)) do
-        table.insert(result, { icon = modifier.icon, tooltip = ('%s %s'):fmt(modifier.key, mobdb_percent_text(modifier.percent)) });
+function draw_mobdb_modifier_group(draw_list, items, x, y, max_width, icon_size, gap, alpha)
+    local cursor_x = x;
+    local max_x = x + math.max(0, max_width);
+    for _, item in ipairs(items or { }) do
+        local tile_width = mobdb_modifier_tile_width(item, icon_size);
+        if (cursor_x + tile_width > max_x) then break; end
+        local icon = load_mobdb_icon(item.icon);
+        if (icon ~= nil) then
+            imgui.SetCursorScreenPos({ cursor_x + 3, y });
+            imgui.Image(icon.handle, { icon_size, icon_size }, { 0, 0 }, { 1, 1 }, { 1, 1, 1, alpha }, { 0, 0, 0, 0 });
+            if (imgui.IsItemHovered()) then
+                imgui.BeginTooltip();
+                imgui.TextUnformatted(('%s: %s%%'):fmt(clean_string(item.key), mobdb_absolute_percent_text(item.percent)));
+                imgui.EndTooltip();
+            end
+        end
+        draw_text(
+            draw_list,
+            cursor_x + icon_size + 6,
+            y + 1,
+            apply_alpha(COLORS.hp_text, alpha),
+            mobdb_absolute_percent_text(item.percent),
+            true,
+            apply_alpha(COLORS.shadow, alpha));
+        cursor_x = cursor_x + tile_width + gap;
     end
-    for _, flag_item in ipairs(info.flags or { }) do
-        table.insert(result, { icon = flag_item.icon, tooltip = flag_item.key });
-    end
-    for _, immunity in ipairs(info.immunities or { }) do
-        table.insert(result, { icon = immunity.icon, tooltip = ('Immune: %s'):fmt(immunity.key) });
-    end
-    for _, resistance in ipairs(info.status_resistances or { }) do
-        table.insert(result, { icon = 'Immune' .. resistance.key, tooltip = ('%s resist %s'):fmt(resistance.key, mobdb_percent_text(resistance.percent)) });
-    end
-    return result;
+    return cursor_x;
 end
 
-function draw_mobdb_dossier_tooltip(info, width)
+function draw_mobdb_item_tooltip(drop)
+    local item_id = tonumber(drop ~= nil and drop.id or nil);
+    local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
+    local resource = resources ~= nil and item_id ~= nil and safe_read(function () return resources:GetItemById(item_id); end, nil) or nil;
+    local name = clean_string(drop ~= nil and drop.name or '');
     imgui.BeginTooltip();
-    imgui.PushStyleColor(ImGuiCol_Text, COLORS.accent);
-    imgui.TextUnformatted(('MobDB · Lv%s%s'):fmt(
-        clean_string(info.level),
-        #clean_string(info.job) > 0 and (' ' .. clean_string(info.job)) or ''));
-    imgui.PopStyleColor();
-    imgui.Separator();
-    for _, line in ipairs(mobdb_info_lines(info, 'dossier', math.min(width, 480))) do
-        -- MobDB modifier lines contain literal percent signs. ImGui.Text is
-        -- printf-style, so dynamic database text must never be used as its
-        -- format string.
-        imgui.TextUnformatted(line);
+    imgui.PushTextWrapPos(340);
+    local large_icon = load_item_icon(item_id);
+    if (large_icon ~= nil) then
+        imgui.Image(large_icon.handle, { 32, 32 });
+        imgui.SameLine(0, 8);
     end
+    imgui.TextUnformatted(#name > 0 and name or 'Unknown item');
+    local stack_size = resource ~= nil and tonumber(safe_read(function () return resource.StackSize; end, nil)) or nil;
+    if (stack_size ~= nil and stack_size > 1) then
+        imgui.TextUnformatted(('Stack: %d'):fmt(stack_size));
+    end
+    local description = resource ~= nil and clean_string(safe_read(function () return resource.Description[1]; end, '')) or '';
+    if (#description > 0) then
+        imgui.Separator();
+        imgui.TextUnformatted(description);
+    end
+    imgui.PopTextWrapPos();
     imgui.EndTooltip();
 end
 
@@ -4560,71 +4576,141 @@ function draw_target_mobdb_overlay(unit, x, y, width, row_height, alpha, left_in
 
     local draw_list = imgui.GetWindowDrawList();
     local icon_size = 18;
-    local icon_gap = 3;
+    local icon_gap = 2;
     local padding = 4;
-    local trigger_width = 27;
     local overlay_x = x + left_inset + 7;
     local overlay_y = y + row_height - icon_size - 7;
     local overlay_width = math.max(0, width - left_inset - right_inset - 104);
-    if (overlay_width < trigger_width) then
+    if (overlay_width < 42) then
         return;
     end
 
-    local source_items = mobdb_icon_items(info);
-    local max_icons = math.max(0, math.floor((overlay_width - trigger_width - padding - icon_gap) / (icon_size + icon_gap)));
-    local visible_icons = math.min(#source_items, max_icons);
-    local content_width = trigger_width + padding + (visible_icons * (icon_size + icon_gap));
-    if (visible_icons > 0) then content_width = content_width - icon_gap; end
-
-    draw_list:AddRectFilled(
-        { overlay_x, overlay_y - 2 },
-        { overlay_x + content_width, overlay_y + icon_size + 2 },
-        color_u32(apply_alpha(COLORS.shadow, alpha * 0.72)),
-        4.0);
-
-    local icon_x = overlay_x + padding;
-    for index = 1, visible_icons, 1 do
-        local item = source_items[index];
-        local icon = load_mobdb_icon(item.icon);
-        if (icon ~= nil) then
-            imgui.SetCursorScreenPos({ icon_x, overlay_y });
-            imgui.Image(icon.handle, { icon_size, icon_size }, { 0, 0 }, { 1, 1 }, { 1, 1, 1, alpha }, { 0, 0, 0, 0 });
-            if (imgui.IsItemHovered()) then
-                imgui.BeginTooltip();
-                imgui.TextUnformatted(item.tooltip);
-                imgui.EndTooltip();
-            end
-        end
-        icon_x = icon_x + icon_size + icon_gap;
+    local weak, strong = mobdb_modifier_groups(info);
+    local divider_width = (#weak > 0 and #strong > 0) and 5 or 0;
+    local available = overlay_width - divider_width;
+    local weak_desired = mobdb_group_width(weak, icon_size, icon_gap) + (padding * 2);
+    local strong_desired = mobdb_group_width(strong, icon_size, icon_gap) + (padding * 2);
+    local weak_width = #strong == 0 and available or 0;
+    local strong_width = #weak == 0 and available or 0;
+    if (#weak > 0 and #strong > 0) then
+        local ratio = weak_desired / math.max(1, weak_desired + strong_desired);
+        ratio = math.max(0.55, math.min(0.78, ratio));
+        weak_width = math.floor(available * ratio);
+        strong_width = available - weak_width;
     end
 
-    local hidden_count = #source_items - visible_icons;
-    local trigger_x = overlay_x + content_width - trigger_width;
-    draw_list:AddRectFilled(
-        { trigger_x + 2, overlay_y + 1 },
-        { trigger_x + trigger_width - 2, overlay_y + icon_size - 1 },
-        color_u32(apply_alpha(COLORS.panel_bg, alpha * 0.94)),
-        8.0);
-    draw_list:AddRect(
-        { trigger_x + 2, overlay_y + 1 },
-        { trigger_x + trigger_width - 2, overlay_y + icon_size - 1 },
-        color_u32(apply_alpha(COLORS.row_border_active, alpha)),
-        8.0,
-        ImDrawCornerFlags_All,
-        1.0);
-    local trigger_label = hidden_count > 0 and ('+' .. hidden_count) or 'i';
-    draw_text(
-        draw_list,
-        trigger_x + math.max(3, math.floor((trigger_width - calc_text_width(trigger_label)) / 2)),
-        overlay_y + 1,
-        apply_alpha(COLORS.hp_text, alpha),
-        trigger_label,
-        true,
-        apply_alpha(COLORS.shadow, alpha));
-    imgui.SetCursorScreenPos({ trigger_x, overlay_y });
-    imgui.Dummy({ trigger_width, icon_size });
-    if (imgui.IsItemHovered()) then
-        draw_mobdb_dossier_tooltip(info, width);
+    if (#weak > 0) then
+        draw_list:AddRectFilled(
+            { overlay_x, overlay_y - 2 },
+            { overlay_x + weak_width, overlay_y + icon_size + 2 },
+            color_u32(apply_alpha(COLORS.mobdb_weak_bg, alpha)),
+            3.0);
+        draw_list:AddRectFilled(
+            { overlay_x, overlay_y + icon_size },
+            { overlay_x + weak_width, overlay_y + icon_size + 2 },
+            color_u32(apply_alpha(COLORS.mobdb_weak_border, alpha)),
+            0.0);
+        draw_mobdb_modifier_group(draw_list, weak, overlay_x + padding, overlay_y, weak_width - (padding * 2), icon_size, icon_gap, alpha);
+    end
+
+    local strong_x = overlay_x + weak_width + divider_width;
+    if (#strong > 0) then
+        draw_list:AddRectFilled(
+            { strong_x, overlay_y - 2 },
+            { strong_x + strong_width, overlay_y + icon_size + 2 },
+            color_u32(apply_alpha(COLORS.mobdb_strong_bg, alpha)),
+            3.0);
+        draw_list:AddRectFilled(
+            { strong_x, overlay_y + icon_size },
+            { strong_x + strong_width, overlay_y + icon_size + 2 },
+            color_u32(apply_alpha(COLORS.mobdb_strong_border, alpha)),
+            0.0);
+        draw_mobdb_modifier_group(draw_list, strong, strong_x + padding, overlay_y, strong_width - (padding * 2), icon_size, icon_gap, alpha);
+    end
+
+    local utility_y = overlay_y - icon_size - 6;
+    if (utility_y >= y + 24) then
+        local utility_x = overlay_x + padding;
+        local utility_max_x = overlay_x + overlay_width;
+        for _, flag_item in ipairs(info.flags or { }) do
+            if (utility_x + icon_size > utility_max_x) then break; end
+            local icon = load_mobdb_icon(flag_item.icon);
+            if (icon ~= nil) then
+                imgui.SetCursorScreenPos({ utility_x, utility_y });
+                imgui.Image(icon.handle, { icon_size, icon_size }, { 0, 0 }, { 1, 1 }, { 1, 1, 1, alpha }, { 0, 0, 0, 0 });
+                if (imgui.IsItemHovered()) then
+                    imgui.BeginTooltip();
+                    imgui.TextUnformatted(clean_string(flag_item.key));
+                    imgui.EndTooltip();
+                end
+            end
+            utility_x = utility_x + icon_size + icon_gap;
+        end
+
+        for _, immunity in ipairs(info.immunities or { }) do
+            if (utility_x + icon_size > utility_max_x) then break; end
+            local icon = load_mobdb_icon(immunity.icon);
+            if (icon ~= nil) then
+                imgui.SetCursorScreenPos({ utility_x, utility_y });
+                imgui.Image(icon.handle, { icon_size, icon_size }, { 0, 0 }, { 1, 1 }, { 1, 1, 1, alpha }, { 0, 0, 0, 0 });
+                if (imgui.IsItemHovered()) then
+                    imgui.BeginTooltip();
+                    imgui.TextUnformatted(('Immune: %s'):fmt(clean_string(immunity.key)));
+                    imgui.EndTooltip();
+                end
+            end
+            utility_x = utility_x + icon_size + icon_gap;
+        end
+
+        for _, resistance in ipairs(info.status_resistances or { }) do
+            if (utility_x + icon_size > utility_max_x) then break; end
+            local icon = load_mobdb_icon('Immune' .. clean_string(resistance.key));
+            if (icon ~= nil) then
+                imgui.SetCursorScreenPos({ utility_x, utility_y });
+                imgui.Image(icon.handle, { icon_size, icon_size }, { 0, 0 }, { 1, 1 }, { 1, 1, 1, alpha }, { 0, 0, 0, 0 });
+                if (imgui.IsItemHovered()) then
+                    imgui.BeginTooltip();
+                    imgui.TextUnformatted(('%s resistance: %s%%'):fmt(clean_string(resistance.key), mobdb_absolute_percent_text(resistance.percent)));
+                    imgui.EndTooltip();
+                end
+            end
+            utility_x = utility_x + icon_size + icon_gap;
+        end
+
+        if (#(info.drops or { }) > 0 and utility_x + 5 < utility_max_x) then
+            draw_list:AddRectFilled(
+                { utility_x + 1, utility_y + 2 },
+                { utility_x + 2, utility_y + icon_size - 2 },
+                color_u32(apply_alpha(COLORS.row_border_active, alpha * 0.72)),
+                0.0);
+            utility_x = utility_x + 6;
+        end
+        for _, drop in ipairs(info.drops or { }) do
+            if (utility_x + icon_size > utility_max_x) then break; end
+            local icon = load_item_icon(drop.id);
+            if (icon ~= nil) then
+                imgui.SetCursorScreenPos({ utility_x, utility_y });
+                imgui.Image(icon.handle, { icon_size, icon_size }, { 0, 0 }, { 1, 1 }, { 1, 1, 1, alpha }, { 0, 0, 0, 0 });
+                if (imgui.IsItemHovered()) then
+                    draw_mobdb_item_tooltip(drop);
+                end
+            end
+            utility_x = utility_x + icon_size + icon_gap;
+        end
+
+        local respawn = clean_string(info.respawn);
+        if (#respawn > 0 and respawn ~= 'Not recorded') then
+            local respawn_width = 18 + calc_text_width(respawn);
+            if (utility_x + respawn_width <= utility_max_x) then
+                local clock_x = utility_x + 7;
+                local clock_y = utility_y + 9;
+                local clock_color = color_u32(apply_alpha(COLORS.text_muted, alpha));
+                draw_list:AddCircle({ clock_x, clock_y }, 6.0, clock_color, 16, 1.0);
+                draw_list:AddLine({ clock_x, clock_y }, { clock_x, clock_y - 4 }, clock_color, 1.0);
+                draw_list:AddLine({ clock_x, clock_y }, { clock_x + 3, clock_y + 2 }, clock_color, 1.0);
+                draw_text(draw_list, utility_x + 16, utility_y + 1, apply_alpha(COLORS.hp_text, alpha), respawn, false, apply_alpha(COLORS.shadow, alpha));
+            end
+        end
     end
 end
 
@@ -5143,7 +5229,7 @@ function render_target_frame_config_tab()
     end
 
     if (state.settings.show_target_mobdb) then
-        imgui.TextColored(COLORS.text_muted, 'Compact icon ribbon; hover +N/i for the full dossier.');
+        imgui.TextColored(COLORS.text_muted, 'Split damage rail with visible values; drop names appear on item hover.');
     end
 
     imgui.Separator();

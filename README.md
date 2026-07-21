@@ -11,16 +11,15 @@ clean while important unit information remains visible elsewhere on screen.
 
 - Draws a draggable target frame with name, HP percent, distance when
   available, and observed check difficulty/level in the top-right label slot.
-- Integrates the installed MobDB zone database directly beneath monster target
-  frames. It adds MobDB level/job data, aggro and detection flags, physical and
-  elemental modifiers, status immunities/resistances, respawn information,
-  drops, spells, notes, position/direction/speed, entity IDs, and static/custom
-  identity without requiring the MobDB addon itself to be loaded.
-- Keeps MobDB intelligence inside the existing target frame with a compact icon
-  ribbon that adds no frame height. Hover an icon for its exact meaning and
-  modifier value; hover the final `i` or `+N` marker for a player-facing dossier
-  that omits internal entity IDs, coordinates, movement data, neutral modifiers,
-  and empty sections.
+- Integrates the installed MobDB zone database directly into monster target
+  frames without requiring the MobDB addon itself to be loaded.
+- Shows damage weaknesses and resistances in a split rail with their absolute
+  modifier values visible beside each icon. Each side is ordered from the most
+  effective damage option to the least effective from left to right.
+- Shows behavior, detection, immunity, and status-resistance icons in a compact
+  utility rail. Mob drops use their real item icons; hovering a drop reveals its
+  item name, stack size, and in-game description. Respawn time remains visible
+  beside a small clock.
 - Draws a draggable self frame for the local player.
 - Draws draggable party frames for party members other than yourself, with
   optional alliance slots. Trust slots that linger in Ashita memory after

@@ -74,14 +74,24 @@ foreach ($unsafeMobdbText in @("imgui.Text(line)", "imgui.Text(item.tooltip)")) 
     }
 }
 
-if (-not $lua.Contains("imgui.TextUnformatted(line)")) {
-    throw "Expected safe unformatted MobDB dossier text rendering was not found."
+foreach ($needle in @("mobdb_modifier_groups", "mobdb_absolute_percent_text", "load_item_icon", "draw_mobdb_item_tooltip")) {
+    if (-not $lua.Contains($needle)) {
+        throw "Expected split-rail MobDB renderer pattern not found: $needle"
+    }
 }
 
-foreach ($developerLine in @("mobdb_append_wrapped(lines, 'Identity'", "mobdb_append_wrapped(lines, 'Position'")) {
-    if ($lua.Contains($developerLine)) {
-        throw "MobDB dossier must not expose developer data: $developerLine"
+foreach ($removedDossierPattern in @("draw_mobdb_dossier_tooltip", "mobdb_info_lines", "trigger_label")) {
+    if ($lua.Contains($removedDossierPattern)) {
+        throw "MobDB dossier trigger must not be restored: $removedDossierPattern"
     }
+}
+
+if (-not $lua.Contains("return left_percent > right_percent")) {
+    throw "MobDB modifiers must remain sorted by damage effectiveness."
+}
+
+if (-not $mobdbLua.Contains("sorted_item_entries")) {
+    throw "Expected structured MobDB drop entries were not found."
 }
 
 if (-not $mobdbLua.Contains("fallback:match('^userdata:%s*0x%x+$')")) {
