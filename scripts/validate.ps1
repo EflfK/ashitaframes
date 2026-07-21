@@ -2,16 +2,19 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 $addon = Join-Path $root "ashitaframes\ashitaframes.lua"
+$mobdb = Join-Path $root "ashitaframes\ashitaframes_mobdb.lua"
 $config = Join-Path $root "ashitaframes\ashitaframes_config.lua"
 $readme = Join-Path $root "README.md"
 
-foreach ($path in @($addon, $config, $readme)) {
+foreach ($path in @($addon, $mobdb, $config, $readme)) {
     if (-not (Test-Path -LiteralPath $path)) {
         throw "Missing required file: $path"
     }
 }
 
 $lua = Get-Content -LiteralPath $addon -Raw
+$mobdbLua = Get-Content -LiteralPath $mobdb -Raw
+$allLua = $lua + "`n" + $mobdbLua
 $configText = Get-Content -LiteralPath $config -Raw
 
 $topLevelLocalCount = ([regex]::Matches($lua, "(?m)^local\s+")).Count
@@ -46,8 +49,14 @@ $forbidden = @(
 )
 
 foreach ($needle in $forbidden) {
-    if ($lua.Contains($needle)) {
+    if ($allLua.Contains($needle)) {
         throw "Forbidden active-helper surface found in addon: $needle"
+    }
+}
+
+foreach ($needle in @("addons/mobdb/data/", "Modifiers", "Immunities", "Drops", "Spells")) {
+    if (-not $mobdbLua.Contains($needle)) {
+        throw "Expected MobDB integration pattern not found: $needle"
     }
 }
 

@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.3.33';
+addon.version   = '0.4.0';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -11,6 +11,7 @@ local chat  = require('chat');
 local d3d8  = require('d3d8');
 local ffi   = require('ffi');
 local imgui = require('imgui');
+local mobdb = require('ashitaframes_mobdb');
 
 local d3d8_device = nil;
 
@@ -64,6 +65,8 @@ local DEFAULT_SETTINGS = {
     show_buff_reminders = true,
     show_target_debuffs = true,
     show_target_debuff_reminders = true,
+    show_target_mobdb = true,
+    target_mobdb_layout = 'combat',
     hide_buff_reminders_in_towns = true,
     buff_reminder_suppressed_zone_ids = { },
     max_buffs = 8,
@@ -355,6 +358,7 @@ local state = {
     buff_id_cache = { },
     buff_icon_cache = { },
     status_icon_cache = { },
+    mobdb_icon_cache = { },
     observed_buffs = { },
     observed_target_buffs = { },
     observed_target_buff_names = { },
@@ -654,7 +658,7 @@ local function clean_string(value)
         return '';
     end
 
-    return tostring(value):gsub('%z', ''):gsub('^%s+', ''):gsub('%s+$', '');
+    return (tostring(value):gsub('%z', ''):gsub('^%s+', ''):gsub('%s+$', ''));
 end
 
 local function compact_name(value)
@@ -1101,6 +1105,14 @@ local function overlay_settings(target, source)
     return target;
 end
 
+function normalize_mobdb_layout(value)
+    value = clean_string(value):lower();
+    if value == 'tactical' or value == 'dossier' then
+        return value;
+    end
+    return 'combat';
+end
+
 local function normalize_settings(settings)
     settings.visible = settings.visible ~= false;
     settings.locked = settings.locked == true;
@@ -1120,6 +1132,8 @@ local function normalize_settings(settings)
     settings.show_buff_reminders = settings.show_buff_reminders ~= false;
     settings.show_target_debuffs = settings.show_target_debuffs ~= false;
     settings.show_target_debuff_reminders = settings.show_target_debuff_reminders ~= false;
+    settings.show_target_mobdb = settings.show_target_mobdb ~= false;
+    settings.target_mobdb_layout = normalize_mobdb_layout(settings.target_mobdb_layout);
     settings.hide_buff_reminders_in_towns = settings.hide_buff_reminders_in_towns ~= false;
 
     settings.self_window_x = clamp_int(settings.self_window_x, -2000, 4000);
@@ -2025,6 +2039,43 @@ local function load_buff_icon(filename)
     };
 
     state.buff_icon_cache[filename] = icon;
+    return icon;
+end
+
+function load_mobdb_icon(icon_name)
+    icon_name = clean_string(icon_name);
+    if (#icon_name == 0 or state.mobdb_icon_cache[icon_name] == false) then
+        return nil;
+    end
+    if (state.mobdb_icon_cache[icon_name] ~= nil) then
+        return state.mobdb_icon_cache[icon_name];
+    end
+
+    local device = ensure_d3d_device();
+    if (device == nil) then
+        return nil;
+    end
+
+    local install_path = clean_string(safe_read(function () return AshitaCore:GetInstallPath(); end, ''));
+    local path = ('%saddons/mobdb/icons/%s.png'):fmt(install_path, icon_name);
+    if (not ashita.fs.exists(path)) then
+        state.mobdb_icon_cache[icon_name] = false;
+        return nil;
+    end
+
+    local texture_ptr = ffi.new('IDirect3DTexture8*[1]');
+    local result = safe_read(function () return ffi.C.D3DXCreateTextureFromFileA(device, path, texture_ptr); end, nil);
+    if (result ~= 0 or texture_ptr[0] == nil) then
+        state.mobdb_icon_cache[icon_name] = false;
+        return nil;
+    end
+
+    local texture = d3d8.gc_safe_release(ffi.cast('IDirect3DTexture8*', texture_ptr[0]));
+    local icon = {
+        texture = texture,
+        handle = tonumber(ffi.cast('uint32_t', texture)),
+    };
+    state.mobdb_icon_cache[icon_name] = icon;
     return icon;
 end
 
@@ -2969,6 +3020,8 @@ local function config_text_from_settings(settings)
         ('        show_buff_reminders = %s,'):fmt(bool_text(settings.show_buff_reminders)),
         ('        show_target_debuffs = %s,'):fmt(bool_text(settings.show_target_debuffs)),
         ('        show_target_debuff_reminders = %s,'):fmt(bool_text(settings.show_target_debuff_reminders)),
+        ('        show_target_mobdb = %s,'):fmt(bool_text(settings.show_target_mobdb)),
+        ("        target_mobdb_layout = '%s',"):fmt(normalize_mobdb_layout(settings.target_mobdb_layout)),
         ('        hide_buff_reminders_in_towns = %s,'):fmt(bool_text(settings.hide_buff_reminders_in_towns)),
         ('        buff_reminder_suppressed_zone_ids = %s,'):fmt(zone_id_list_text(settings.buff_reminder_suppressed_zone_ids)),
         ('        max_buffs = %d,'):fmt(settings.max_buffs),
@@ -3680,6 +3733,12 @@ local function collect_target_unit()
     end
     local target_type = safe_read(function () return entity:GetType(active_index); end, nil);
     local spawn_flags = safe_read(function () return entity:GetSpawnFlags(active_index); end, nil);
+    local party = safe_read(function () return memory:GetParty(); end, nil);
+    local zone_id = party ~= nil and safe_read(function () return party:GetMemberZone(0); end, nil) or nil;
+    local mobdb_info = nil;
+    if (state.settings.show_target_mobdb and target_type == 2 and target_debuff_has_monster_spawn_flag(spawn_flags)) then
+        mobdb_info = safe_read(function () return mobdb:snapshot(zone_id, active_index, name, server_id); end, nil);
+    end
 
     return {
         kind = 'target',
@@ -3699,6 +3758,7 @@ local function collect_target_unit()
         buffs = merge_buff_lists(target_entity_buffs(entity, active_index), observed_target_buffs_for_unit(server_id, name)),
         debuffs = observed_target_debuffs_for_unit(server_id, name),
         check = observed_target_check_for_unit(server_id, name),
+        mobdb = mobdb_info,
         same_zone = true,
         dim = false,
     };
@@ -4027,6 +4087,16 @@ function target_check_label(unit)
         return '';
     end
 
+    if (type(unit.mobdb) == 'table') then
+        local toughness = type(unit.check) == 'table' and clean_string(unit.check.toughness) or '??';
+        if (#toughness == 0) then toughness = '??'; end
+        local observed_level = type(unit.check) == 'table' and tonumber(unit.check.level) or nil;
+        local level = observed_level ~= nil and tostring(math.floor(observed_level + 0.5)) or clean_string(unit.mobdb.level);
+        if (#level == 0) then level = '??'; end
+        local job = clean_string(unit.mobdb.job);
+        return ('%s Lv.%s%s'):fmt(toughness, level, #job > 0 and (' ' .. job) or '');
+    end
+
     return target_check_display_text(unit.check);
 end
 
@@ -4350,6 +4420,192 @@ function draw_resource_bars(draw_list, unit, layout, x, y, width, height, alpha)
     end
 end
 
+function mobdb_percent_text(percent)
+    percent = tonumber(percent) or 0;
+    if math.abs(percent) < 0.005 then
+        return '0%';
+    end
+    local text = string.format('%+.2f', percent):gsub('0+$', ''):gsub('%.$', '');
+    return text .. '%';
+end
+
+function mobdb_modifier_text(items, predicate)
+    local pieces = { };
+    for _, item in ipairs(items or { }) do
+        if predicate == nil or predicate(item.percent) then
+            table.insert(pieces, ('%s %s'):fmt(item.key, mobdb_percent_text(item.percent)));
+        end
+    end
+    return #pieces > 0 and table.concat(pieces, '  ') or 'None';
+end
+
+function mobdb_names_text(items)
+    local pieces = { };
+    for _, item in ipairs(items or { }) do
+        table.insert(pieces, clean_string(item.key or item));
+    end
+    return #pieces > 0 and table.concat(pieces, '  ') or 'None';
+end
+
+function mobdb_join_lists(first, second)
+    local result = { };
+    for _, item in ipairs(first or { }) do table.insert(result, item); end
+    for _, item in ipairs(second or { }) do table.insert(result, item); end
+    return result;
+end
+
+function mobdb_wrapped_lines(text, width)
+    local result = { };
+    local current = '';
+    width = math.max(80, width);
+    for word in clean_string(text):gmatch('%S+') do
+        local candidate = #current > 0 and (current .. ' ' .. word) or word;
+        if (#current > 0 and calc_text_width(candidate) > width) then
+            table.insert(result, current);
+            current = word;
+        else
+            current = candidate;
+        end
+    end
+    if (#current > 0) then table.insert(result, current); end
+    if (#result == 0) then table.insert(result, ''); end
+    return result;
+end
+
+function mobdb_append_wrapped(lines, label, text, width)
+    local prefix = #clean_string(label) > 0 and (label .. ': ') or '';
+    for _, line in ipairs(mobdb_wrapped_lines(prefix .. clean_string(text), width)) do
+        table.insert(lines, line);
+    end
+end
+
+function mobdb_info_lines(info, mode, width)
+    local lines = { };
+    local physical = info.physical or { };
+    local magical = info.magical or { };
+    local all_modifiers = mobdb_join_lists(physical, magical);
+    local line_width = math.max(90, width - 18);
+
+    if (mode == 'combat') then
+        mobdb_append_wrapped(lines, 'Weak', mobdb_modifier_text(all_modifiers, function (value) return value > 0; end), line_width);
+        mobdb_append_wrapped(lines, 'Resist', mobdb_modifier_text(all_modifiers, function (value) return value < 0; end), line_width);
+        mobdb_append_wrapped(lines, 'Flags', mobdb_names_text(info.flags), line_width);
+        mobdb_append_wrapped(lines, 'Immune', mobdb_names_text(info.immunities), line_width);
+        mobdb_append_wrapped(lines, 'Intel', ('%d drops  %d spells  Respawn %s'):fmt(#(info.drops or { }), #(info.spells or { }), info.respawn or 'Unknown'), line_width);
+        return lines;
+    end
+
+    if (mode == 'tactical') then
+        mobdb_append_wrapped(lines, 'Physical', mobdb_modifier_text(info.physical_all), line_width);
+        mobdb_append_wrapped(lines, 'Elements', mobdb_modifier_text(info.magical_all), line_width);
+        mobdb_append_wrapped(lines, 'Flags', mobdb_names_text(info.flags), line_width);
+        mobdb_append_wrapped(lines, 'Immunities', mobdb_names_text(info.immunities), line_width);
+        mobdb_append_wrapped(lines, 'Status resist', mobdb_modifier_text(info.status_resistances), line_width);
+        mobdb_append_wrapped(lines, 'Intel', ('%d drops  %d spells  Respawn %s  %s'):fmt(#(info.drops or { }), #(info.spells or { }), info.respawn or 'Unknown', info.custom and 'Custom mob' or 'Static mob'), line_width);
+        return lines;
+    end
+
+    local id_text = ('Index %d [0x%X]  ID %d [0x%08X]  %s'):fmt(
+        tonumber(info.index) or 0,
+        tonumber(info.index) or 0,
+        tonumber(info.server_id) or 0,
+        tonumber(info.server_id) or 0,
+        info.custom and 'Custom mob' or 'Static mob');
+    mobdb_append_wrapped(lines, 'Identity', id_text, line_width);
+    mobdb_append_wrapped(lines, 'Position', ('%s  %s  %s'):fmt(info.position or 'Unknown', info.direction or 'Unknown', info.speed or 'Unknown'), line_width);
+    mobdb_append_wrapped(lines, 'Behavior', mobdb_names_text(info.flags), line_width);
+    mobdb_append_wrapped(lines, 'Physical', mobdb_modifier_text(info.physical_all), line_width);
+    mobdb_append_wrapped(lines, 'Elements', mobdb_modifier_text(info.magical_all), line_width);
+    mobdb_append_wrapped(lines, 'Immunities', mobdb_names_text(info.immunities), line_width);
+    mobdb_append_wrapped(lines, 'Status resist', mobdb_modifier_text(info.status_resistances), line_width);
+    mobdb_append_wrapped(lines, 'Respawn', info.respawn or 'Unknown', line_width);
+    mobdb_append_wrapped(lines, 'Drops', #(info.drops or { }) > 0 and table.concat(info.drops, ', ') or 'None recorded', line_width);
+    mobdb_append_wrapped(lines, 'Spells', #(info.spells or { }) > 0 and table.concat(info.spells, ', ') or 'None recorded', line_width);
+    mobdb_append_wrapped(lines, 'Notes', #(info.notes or { }) > 0 and table.concat(info.notes, ' | ') or 'None', line_width);
+    return lines;
+end
+
+function mobdb_icon_items(info)
+    local result = { };
+    for _, flag_item in ipairs(info.flags or { }) do
+        table.insert(result, { icon = flag_item.icon, tooltip = flag_item.key });
+    end
+    for _, modifier in ipairs(mobdb_join_lists(info.physical, info.magical)) do
+        table.insert(result, { icon = modifier.icon, tooltip = ('%s %s'):fmt(modifier.key, mobdb_percent_text(modifier.percent)) });
+    end
+    for _, immunity in ipairs(info.immunities or { }) do
+        table.insert(result, { icon = immunity.icon, tooltip = ('Immune: %s'):fmt(immunity.key) });
+    end
+    for _, resistance in ipairs(info.status_resistances or { }) do
+        table.insert(result, { icon = 'Immune' .. resistance.key, tooltip = ('%s resist %s'):fmt(resistance.key, mobdb_percent_text(resistance.percent)) });
+    end
+    return result;
+end
+
+function draw_target_mobdb_panel(unit, layout)
+    local info = unit ~= nil and unit.mobdb or nil;
+    if (not state.settings.show_target_mobdb or type(info) ~= 'table') then
+        return;
+    end
+
+    local mode = normalize_mobdb_layout(state.settings.target_mobdb_layout);
+    local x, y = imgui.GetCursorScreenPos();
+    local width = layout.width;
+    local alpha = layout.opacity / 100;
+    local padding = 7;
+    local icon_size = 18;
+    local icon_gap = 4;
+    local icon_items = mobdb_icon_items(info);
+    local icons_per_row = math.max(1, math.floor((width - (padding * 2) + icon_gap) / (icon_size + icon_gap)));
+    local icon_rows = math.ceil(#icon_items / icons_per_row);
+    local icon_height = icon_rows > 0 and ((icon_rows * icon_size) + ((icon_rows - 1) * icon_gap) + 5) or 0;
+    local lines = mobdb_info_lines(info, mode, width);
+    local line_height = text_line_height() + 3;
+    local height = (padding * 2) + icon_height + (#lines * line_height);
+    local draw_list = imgui.GetWindowDrawList();
+
+    draw_list:AddRectFilled({ x, y }, { x + width, y + height }, color_u32(apply_alpha(COLORS.row_bg, alpha * 0.96)), 4.0);
+    draw_list:AddRect({ x, y }, { x + width, y + height }, color_u32(apply_alpha(COLORS.row_border_active, alpha * 0.78)), 4.0, ImDrawCornerFlags_All, 1.0);
+
+    local icon_x = x + padding;
+    local icon_y = y + padding;
+    for index, item in ipairs(icon_items) do
+        local icon = load_mobdb_icon(item.icon);
+        if (icon ~= nil) then
+            imgui.SetCursorScreenPos({ icon_x, icon_y });
+            imgui.Image(icon.handle, { icon_size, icon_size }, { 0, 0 }, { 1, 1 }, { 1, 1, 1, alpha }, { 0, 0, 0, 0 });
+            if (imgui.IsItemHovered()) then
+                imgui.BeginTooltip();
+                imgui.Text(item.tooltip);
+                imgui.EndTooltip();
+            end
+        else
+            draw_text(draw_list, icon_x + 2, icon_y + 1, apply_alpha(COLORS.text_muted, alpha), '?', true, apply_alpha(COLORS.shadow, alpha));
+        end
+        if ((index % icons_per_row) == 0) then
+            icon_x = x + padding;
+            icon_y = icon_y + icon_size + icon_gap;
+        else
+            icon_x = icon_x + icon_size + icon_gap;
+        end
+    end
+
+    local text_y = y + padding + icon_height;
+    for index, line in ipairs(lines) do
+        local color = COLORS.text;
+        if (line:find('^Weak:', 1, false) ~= nil) then color = COLORS.accent; end
+        if (line:find('^Resist:', 1, false) ~= nil) then color = COLORS.warning; end
+        draw_text(draw_list, x + padding, text_y, apply_alpha(color, alpha), line, true, apply_alpha(COLORS.shadow, alpha));
+        text_y = text_y + line_height;
+        if (index < #lines) then
+            draw_list:AddLine({ x + padding, text_y - 2 }, { x + width - padding, text_y - 2 }, color_u32(apply_alpha(COLORS.row_border, alpha * 0.34)), 1.0);
+        end
+    end
+
+    imgui.SetCursorScreenPos({ x, y });
+    imgui.Dummy({ width, height + layout.row_gap });
+end
+
 local function draw_unit_row(unit, layout, row_height, skip_spacing)
     local x, y = imgui.GetCursorScreenPos();
     local draw_list = imgui.GetWindowDrawList();
@@ -4407,7 +4663,7 @@ local function effective_row_height(unit, layout)
     return row_height;
 end
 
-local function render_window(title, open_state, x, y, layout, units, position_callback)
+local function render_window(title, open_state, x, y, layout, units, position_callback, after_rows)
     local settings = state.settings;
     if (#units == 0) then
         return;
@@ -4433,6 +4689,9 @@ local function render_window(title, open_state, x, y, layout, units, position_ca
 
         for _, unit in ipairs(units) do
             draw_unit_row(unit, layout, effective_row_height(unit, layout));
+        end
+        if (after_rows ~= nil) then
+            after_rows(units, layout);
         end
     end
 
@@ -4523,6 +4782,9 @@ local function render_target()
         function (x, y)
             state.target_window_x = math.floor(x + 0.5);
             state.target_window_y = math.floor(y + 0.5);
+        end,
+        function (units, layout)
+            draw_target_mobdb_panel(units[1], layout);
         end);
 end
 
@@ -4853,6 +5115,22 @@ function render_target_frame_config_tab()
     if (imgui.Checkbox('Missing Target Debuffs##ashitaframes_show_target_debuff_reminders', { show_target_debuff_reminders })) then
         state.settings.show_target_debuff_reminders = not show_target_debuff_reminders;
         mark_config_changed();
+    end
+
+    local show_target_mobdb = state.settings.show_target_mobdb == true;
+    if (imgui.Checkbox('MobDB Target Intelligence##ashitaframes_show_target_mobdb', { show_target_mobdb })) then
+        state.settings.show_target_mobdb = not show_target_mobdb;
+        mark_config_changed();
+    end
+
+    if (state.settings.show_target_mobdb) then
+        local layout = normalize_mobdb_layout(state.settings.target_mobdb_layout);
+        local display = ({ combat = 'Combat Strip', tactical = 'Tactical Matrix', dossier = 'Full Dossier' })[layout];
+        if (imgui.Button(('MobDB Layout: %s##ashitaframes_target_mobdb_layout'):fmt(display))) then
+            state.settings.target_mobdb_layout = layout == 'combat' and 'tactical' or (layout == 'tactical' and 'dossier' or 'combat');
+            mark_config_changed();
+        end
+        imgui.TextColored(COLORS.text_muted, 'Click to cycle layouts. Reads the installed MobDB zone data.');
     end
 
     imgui.Separator();
