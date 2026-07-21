@@ -13,12 +13,13 @@ clean while important unit information remains visible elsewhere on screen.
   available, and observed check difficulty/level in the top-right label slot.
 - Integrates the installed MobDB zone database directly into monster target
   frames without requiring the MobDB addon itself to be loaded.
-- Shows damage weaknesses and resistances in a split rail with their absolute
-  modifier values visible beside each icon. Each side is ordered from the most
-  effective damage option to the least effective from left to right.
-- Shows behavior, detection, immunity, and status-resistance icons in a compact
-  utility rail. Mob drops use their real item icons; hovering a drop reveals its
-  item name, stack size, and in-game description. Respawn time remains visible
+- Presents MobDB information as a compact three-row field card inside the target
+  frame: centered behavior text in the header, labeled `WEAK` and `STRONG`
+  content-sized damage chips in the middle, and drops/respawn in the footer.
+- Damage chips show absolute modifier values and each side is ordered from the
+  most effective damage option to the least effective from left to right.
+- Mob drops use their real item icons and visible names; hovering an item also
+  reveals its stack size and in-game description. Respawn time remains centered
   beside a small clock.
 - Draws a draggable self frame for the local player.
 - Draws draggable party frames for party members other than yourself, with

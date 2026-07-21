@@ -80,6 +80,12 @@ foreach ($needle in @("mobdb_modifier_groups", "mobdb_absolute_percent_text", "l
     }
 }
 
+foreach ($mockPattern in @("'WEAK', true", "'STRONG', false", "mobdb_behavior_text", "footer_y", "drop.name")) {
+    if (-not $lua.Contains($mockPattern)) {
+        throw "Expected selected field-card mock pattern not found: $mockPattern"
+    }
+}
+
 foreach ($removedDossierPattern in @("draw_mobdb_dossier_tooltip", "mobdb_info_lines", "trigger_label")) {
     if ($lua.Contains($removedDossierPattern)) {
         throw "MobDB dossier trigger must not be restored: $removedDossierPattern"
