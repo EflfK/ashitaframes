@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.4.1';
+addon.version   = '0.4.2';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -4533,12 +4533,17 @@ end
 
 function draw_mobdb_dossier_tooltip(info, width)
     imgui.BeginTooltip();
-    imgui.TextColored(COLORS.accent, ('MobDB · Lv%s%s'):fmt(
+    imgui.PushStyleColor(ImGuiCol_Text, COLORS.accent);
+    imgui.TextUnformatted(('MobDB · Lv%s%s'):fmt(
         clean_string(info.level),
         #clean_string(info.job) > 0 and (' ' .. clean_string(info.job)) or ''));
+    imgui.PopStyleColor();
     imgui.Separator();
     for _, line in ipairs(mobdb_info_lines(info, 'dossier', math.min(width, 480))) do
-        imgui.Text(line);
+        -- MobDB modifier lines contain literal percent signs. ImGui.Text is
+        -- printf-style, so dynamic database text must never be used as its
+        -- format string.
+        imgui.TextUnformatted(line);
     end
     imgui.EndTooltip();
 end
@@ -4582,7 +4587,7 @@ function draw_target_mobdb_overlay(unit, x, y, width, row_height, alpha, left_in
             imgui.Image(icon.handle, { icon_size, icon_size }, { 0, 0 }, { 1, 1 }, { 1, 1, 1, alpha }, { 0, 0, 0, 0 });
             if (imgui.IsItemHovered()) then
                 imgui.BeginTooltip();
-                imgui.Text(item.tooltip);
+                imgui.TextUnformatted(item.tooltip);
                 imgui.EndTooltip();
             end
         end

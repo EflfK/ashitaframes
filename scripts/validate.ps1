@@ -68,6 +68,16 @@ if ($lua.Contains("draw_target_mobdb_panel")) {
     throw "Intrusive standalone MobDB panel renderer must not be restored."
 }
 
+foreach ($unsafeMobdbText in @("imgui.Text(line)", "imgui.Text(item.tooltip)")) {
+    if ($lua.Contains($unsafeMobdbText)) {
+        throw "MobDB dynamic text must use TextUnformatted: $unsafeMobdbText"
+    }
+}
+
+if (-not $lua.Contains("imgui.TextUnformatted(line)")) {
+    throw "Expected safe unformatted MobDB dossier text rendering was not found."
+}
+
 if (-not $configText.Contains("settings")) {
     throw "Config file must return a settings table."
 }
