@@ -14,13 +14,14 @@ clean while important unit information remains visible elsewhere on screen.
 - Integrates the installed MobDB zone database directly into monster target
   frames without requiring the MobDB addon itself to be loaded.
 - Presents MobDB information as a compact three-row field card inside the target
-  frame: centered behavior text in the header, labeled `WEAK` and `STRONG`
-  content-sized damage chips in the middle, and drops/respawn in the footer.
+  frame: centered behavior icons in the header, content-sized weak damage chips
+  on the left and strong damage chips on the right, and drops/respawn in the
+  footer.
 - Damage chips show absolute modifier values and each side is ordered from the
   most effective damage option to the least effective from left to right.
-- Mob drops use their real item icons and visible names; hovering an item also
-  reveals its stack size and in-game description. Respawn time remains centered
-  beside a small clock.
+- Mob drops use their real item icons without permanent labels; hovering an item
+  reveals its name, stack size, and in-game description. Respawn time remains
+  centered beside a small clock.
 - Draws a draggable self frame for the local player.
 - Draws draggable party frames for party members other than yourself, with
   optional alliance slots. Trust slots that linger in Ashita memory after

@@ -80,10 +80,20 @@ foreach ($needle in @("mobdb_modifier_groups", "mobdb_absolute_percent_text", "l
     }
 }
 
-foreach ($mockPattern in @("'WEAK', true", "'STRONG', false", "mobdb_behavior_text", "footer_y", "drop.name")) {
+foreach ($mockPattern in @("flag_x", "footer_y", "load_item_icon(drop.id)", "strong_x = content_right - strong_display_width")) {
     if (-not $lua.Contains($mockPattern)) {
         throw "Expected selected field-card mock pattern not found: $mockPattern"
     }
+}
+
+foreach ($removedLabel in @("draw_mobdb_group_label", "'WEAK', true", "'STRONG', false", "draw_text(draw_list, drop_x + footer_icon_size")) {
+    if ($lua.Contains($removedLabel)) {
+        throw "Removed MobDB label must not be restored: $removedLabel"
+    }
+}
+
+if (-not $lua.Contains("tag = '',")) {
+    throw "Target name prefix must remain hidden."
 }
 
 foreach ($removedDossierPattern in @("draw_mobdb_dossier_tooltip", "mobdb_info_lines", "trigger_label")) {

@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.5.1';
+addon.version   = '0.5.2';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -3751,7 +3751,7 @@ local function collect_target_unit()
         if (state.settings.show_empty_target) then
             return {
                 kind = 'target',
-                tag = 'T',
+                tag = '',
                 name = 'No target',
                 hp_pct = nil,
                 distance = nil,
@@ -3790,7 +3790,7 @@ local function collect_target_unit()
 
     return {
         kind = 'target',
-        tag = is_sub_target_active and 'ST' or 'T',
+        tag = '',
         index = active_index,
         server_id = server_id,
         target_type = target_type,
@@ -4558,35 +4558,6 @@ function draw_mobdb_modifier_group(draw_list, items, x, y, max_width, icon_size,
     return cursor_x;
 end
 
-function mobdb_behavior_text(info)
-    local names = { };
-    for _, flag_item in ipairs(info.flags or { }) do
-        local name = clean_string(flag_item.key);
-        if (#name > 0) then table.insert(names, name); end
-    end
-    return table.concat(names, ' · ');
-end
-
-function draw_mobdb_group_label(draw_list, x, y, label, points_up, alpha)
-    local triangle_color = color_u32(apply_alpha(COLORS.hp_text, alpha));
-    local center_y = y + 8;
-    if (points_up) then
-        draw_list:AddTriangleFilled(
-            { x + 4, center_y - 4 },
-            { x, center_y + 3 },
-            { x + 8, center_y + 3 },
-            triangle_color);
-    else
-        draw_list:AddTriangleFilled(
-            { x, center_y - 3 },
-            { x + 8, center_y - 3 },
-            { x + 4, center_y + 4 },
-            triangle_color);
-    end
-    draw_text(draw_list, x + 13, y + 1, apply_alpha(COLORS.hp_text, alpha), label, false, apply_alpha(COLORS.shadow, alpha));
-    return 13 + calc_text_width(label);
-end
-
 function draw_mobdb_item_tooltip(drop)
     local item_id = tonumber(drop ~= nil and drop.id or nil);
     local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
@@ -4630,34 +4601,34 @@ function draw_target_mobdb_overlay(unit, x, y, width, row_height, alpha, left_in
     end
 
     local weak, strong = mobdb_modifier_groups(info);
-    local behavior = mobdb_behavior_text(info);
-    local behavior_width = calc_text_width(behavior);
-    if (#behavior > 0 and behavior_width <= (content_width * 0.46)) then
-        draw_text(
-            draw_list,
-            content_x + math.floor((content_width - behavior_width) / 2),
-            y + 4,
-            apply_alpha(COLORS.text_muted, alpha),
-            behavior,
-            false,
-            apply_alpha(COLORS.shadow, alpha));
+    local flag_count = #(info.flags or { });
+    local flag_width = flag_count > 0 and ((flag_count * icon_size) + ((flag_count - 1) * icon_gap)) or 0;
+    local flag_x = content_x + math.floor((content_width - flag_width) / 2);
+    for _, flag_item in ipairs(info.flags or { }) do
+        local icon = load_mobdb_icon(flag_item.icon);
+        if (icon ~= nil) then
+            imgui.SetCursorScreenPos({ flag_x, y + 3 });
+            imgui.Image(icon.handle, { icon_size, icon_size }, { 0, 0 }, { 1, 1 }, { 1, 1, 1, alpha }, { 0, 0, 0, 0 });
+            if (imgui.IsItemHovered()) then
+                imgui.BeginTooltip();
+                imgui.TextUnformatted(clean_string(flag_item.key));
+                imgui.EndTooltip();
+            end
+        end
+        flag_x = flag_x + icon_size + icon_gap;
     end
 
     local middle_y = y + math.max(28, math.floor((row_height - icon_size) / 2));
-    local weak_label_width = #weak > 0 and draw_mobdb_group_label(draw_list, content_x, middle_y, 'WEAK', true, alpha) or 0;
-    local strong_label_width = #strong > 0 and (13 + calc_text_width('STRONG')) or 0;
     local strong_tiles_width = mobdb_group_width(strong, icon_size, icon_gap);
     local strong_max_width = math.floor(content_width * 0.44);
-    local strong_display_width = math.min(strong_tiles_width, math.max(0, strong_max_width - strong_label_width - 7));
-    local strong_total_width = strong_label_width + (#strong > 0 and 7 or 0) + strong_display_width;
-    local strong_x = content_right - strong_total_width;
+    local strong_display_width = math.min(strong_tiles_width, strong_max_width);
+    local strong_x = content_right - strong_display_width;
 
     if (#strong > 0) then
-        draw_mobdb_group_label(draw_list, strong_x, middle_y, 'STRONG', false, alpha);
         draw_mobdb_modifier_group(
             draw_list,
             strong,
-            strong_x + strong_label_width + 7,
+            strong_x,
             middle_y,
             strong_display_width,
             icon_size,
@@ -4668,7 +4639,7 @@ function draw_target_mobdb_overlay(unit, x, y, width, row_height, alpha, left_in
     end
 
     if (#weak > 0) then
-        local weak_tiles_x = content_x + weak_label_width + 7;
+        local weak_tiles_x = content_x;
         local weak_max_x = #strong > 0 and (strong_x - 10) or content_right;
         draw_mobdb_modifier_group(
             draw_list,
@@ -4688,8 +4659,7 @@ function draw_target_mobdb_overlay(unit, x, y, width, row_height, alpha, left_in
     local drop_x = content_x;
     local drop_max_x = content_x + math.floor(content_width * 0.44);
     for _, drop in ipairs(info.drops or { }) do
-        local name = clean_string(drop.name);
-        local item_width = footer_icon_size + 5 + calc_text_width(name) + 10;
+        local item_width = footer_icon_size + icon_gap;
         if (drop_x + item_width > drop_max_x) then break; end
         local icon = load_item_icon(drop.id);
         if (icon ~= nil) then
@@ -4697,7 +4667,6 @@ function draw_target_mobdb_overlay(unit, x, y, width, row_height, alpha, left_in
             imgui.Image(icon.handle, { footer_icon_size, footer_icon_size }, { 0, 0 }, { 1, 1 }, { 1, 1, 1, alpha }, { 0, 0, 0, 0 });
             if (imgui.IsItemHovered()) then draw_mobdb_item_tooltip(drop); end
         end
-        draw_text(draw_list, drop_x + footer_icon_size + 5, footer_y, apply_alpha(COLORS.hp_text, alpha), name, false, apply_alpha(COLORS.shadow, alpha));
         drop_x = drop_x + item_width;
     end
 
@@ -5230,7 +5199,7 @@ function render_target_frame_config_tab()
     end
 
     if (state.settings.show_target_mobdb) then
-        imgui.TextColored(COLORS.text_muted, 'MobDB field card with labeled damage chips, drops, and respawn time.');
+        imgui.TextColored(COLORS.text_muted, 'MobDB field card with split damage chips, behavior icons, drops, and respawn time.');
     end
 
     imgui.Separator();
