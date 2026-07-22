@@ -64,6 +64,10 @@ if (-not $lua.Contains("draw_target_mobdb_overlay")) {
     throw "Expected compact MobDB target overlay was not found."
 }
 
+if (-not $lua.Contains("local icon = load_status_icon(buff_id);")) {
+    throw "Party status rendering must use native icons for every reported status id."
+}
+
 if ($lua.Contains("draw_target_mobdb_panel")) {
     throw "Intrusive standalone MobDB panel renderer must not be restored."
 }

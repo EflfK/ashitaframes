@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.5.2';
+addon.version   = '0.5.3';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -1573,9 +1573,9 @@ local function observed_buffs_for_name(name)
         return result;
     end
 
-    for key, enabled in pairs(entry) do
+    for buff_id, enabled in pairs(entry) do
         if (enabled == true) then
-            append_buff_id(result, seen, buff_id_for_key(key));
+            append_buff_id(result, seen, buff_id);
         end
     end
 
@@ -2622,8 +2622,7 @@ local function buff_icon_items(unit, missing_items)
 
         local buff_id = unit.buffs[index];
         local key = buff_key_from_id(buff_id);
-        local definition = key ~= nil and BUFF_DEFINITIONS[key] or nil;
-        local icon = definition ~= nil and load_buff_icon(definition.file) or nil;
+        local icon = load_status_icon(buff_id);
         if (icon ~= nil) then
             table.insert(items, {
                 id = buff_id,
@@ -5134,7 +5133,7 @@ function render_party_frame_config_tab()
     end
 
     local show_buffs = state.settings.show_buffs == true;
-    if (imgui.Checkbox('Party Buffs##ashitaframes_show_buffs', { show_buffs })) then
+    if (imgui.Checkbox('Party Status Icons##ashitaframes_show_buffs', { show_buffs })) then
         state.settings.show_buffs = not show_buffs;
         state.settings = normalize_settings(state.settings);
         mark_config_changed();
@@ -5472,9 +5471,9 @@ function observed_buff_summary()
     for name, buffs in pairs(state.observed_buffs) do
         local buff_names = { };
         if (type(buffs) == 'table') then
-            for key, enabled in pairs(buffs) do
+            for buff_id, enabled in pairs(buffs) do
                 if (enabled == true) then
-                    table.insert(buff_names, key);
+                    table.insert(buff_names, buff_name(buff_id));
                 end
             end
         end
@@ -6153,16 +6152,16 @@ function process_observed_target_check_text(message)
     return set_observed_target_check(name, server_id, toughness or '??', level);
 end
 
-function set_observed_buff(name, key, enabled)
+function set_observed_buff(name, status, enabled)
     local name_key = observed_name_key(name);
-    key = normalize_buff_key(key);
-    if (name_key == nil or key == nil or buff_id_for_key(key) == nil or not current_party_contains_name(name)) then
+    local buff_id = tonumber(status) or buff_id_from_name(status);
+    if (name_key == nil or buff_id == nil or buff_id <= 0 or buff_id > 0x3FF or not current_party_contains_name(name)) then
         return false;
     end
 
     if (enabled == true) then
         state.observed_buffs[name_key] = state.observed_buffs[name_key] or { };
-        state.observed_buffs[name_key][key] = true;
+        state.observed_buffs[name_key][buff_id] = true;
         return true;
     end
 
@@ -6171,7 +6170,7 @@ function set_observed_buff(name, key, enabled)
         return false;
     end
 
-    entry[key] = nil;
+    entry[buff_id] = nil;
     for _, value in pairs(entry) do
         if (value == true) then
             return true;
@@ -6203,12 +6202,11 @@ end
 
 function process_observed_buff_text(message)
     local name, buff, enabled = observed_buff_event(clean_event_message(message));
-    local key = buff_key_from_name(buff);
-    if (name == nil or key == nil) then
+    if (name == nil or buff == nil) then
         return false;
     end
 
-    return set_observed_buff(name, key, enabled);
+    return set_observed_buff(name, buff, enabled);
 end
 
 function process_observed_target_buff_text(message)

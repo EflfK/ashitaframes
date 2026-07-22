@@ -34,26 +34,26 @@ clean while important unit information remains visible elsewhere on screen.
   local player uses Ashita cast-bar memory; other units use observed cast
   starts with resource cast-time estimates. Cast labels show the resolved
   spell/item name and append the observed target when available.
-- Shows compact party status icons for mapped buffs from Ashita status memory
-  when available, plus observed party effect messages for trusts. Buff icons
-  draw in a reserved left rail so HP/MP/TP/cast bars remain clear. Protect and
-  Shell are mapped first.
+- Shows compact party status icons for every buff and debuff reported by Ashita
+  status memory, plus observed party effect messages for trusts. Status icons
+  use the game's native artwork and draw in a reserved left rail so
+  HP/MP/TP/cast bars remain clear.
 - Shows compact missing-buff reminders for mapped buffs configured per current
   player job. Missing reminders flash with a crossed icon, and the rail count
   badge shows a hover tooltip listing the missing buffs. Active buffs show as
   normal icons. Trust reminders clear after observed gain messages and reset on
   zoning or party changes, even if another chat addon modifies or hides the
   native incoming line. On load, recent current-zone effect messages seed the
-  observed state, and a bounded live chat-log tail keeps trust buffs updated
-  after reloads and new casts.
-  Protect and Shell are mapped first.
+  observed state, and a bounded live chat-log tail keeps trust statuses updated
+  after reloads and new effects. Protect and Shell remain the initially mapped
+  missing-buff reminders.
 - Shows compact target-frame status rails: observed target buffs on the left
   and owned mapped debuffs plus missing target-debuff reminders on a matching
   right rail. Missing target-debuff reminders only flash when the spell is
   learned, usable by the current main/sub job, and off cooldown. Dia, Paralyze,
   and Slow are mapped first.
 - Includes a persistent in-game configuration window for visibility, locking,
-  sizing, opacity, self/party/pet/target display, party buff display, target
+  sizing, opacity, self/party/pet/target display, party status display, target
   debuff display, missing-buff reminders, and alliance display.
 - Provides local UI commands only. It does not target, cast, click-cast, send
   gameplay commands, inject packets, write memory, or automate actions.
