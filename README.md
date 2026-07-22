@@ -37,7 +37,8 @@ clean while important unit information remains visible elsewhere on screen.
 - Shows compact party status icons for every buff and debuff reported by Ashita
   status memory, plus observed party effect messages for trusts. Status icons
   use the game's native artwork and draw in a reserved left rail so
-  HP/MP/TP/cast bars remain clear.
+  HP/MP/TP/cast bars remain clear. Hovering any status icon shows its name and
+  native in-game description.
 - Shows compact missing-buff reminders for mapped buffs configured per current
   player job. Missing reminders flash with a crossed icon, and the rail count
   badge shows a hover tooltip listing the missing buffs. Active buffs show as

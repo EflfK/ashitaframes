@@ -68,6 +68,12 @@ if (-not $lua.Contains("local icon = load_status_icon(buff_id);")) {
     throw "Party status rendering must use native icons for every reported status id."
 }
 
+foreach ($needle in @("status_description(item.id)", "resource.Description[1]", "imgui.TextWrapped(description)")) {
+    if (-not $lua.Contains($needle)) {
+        throw "Expected native status tooltip pattern not found: $needle"
+    }
+}
+
 if ($lua.Contains("draw_target_mobdb_panel")) {
     throw "Intrusive standalone MobDB panel renderer must not be restored."
 }

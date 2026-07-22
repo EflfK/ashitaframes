@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.5.3';
+addon.version   = '0.5.4';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -360,6 +360,7 @@ local state = {
     config_debuff_job_key = nil,
     buff_name_cache = { },
     buff_id_cache = { },
+    status_description_cache = { },
     buff_icon_cache = { },
     status_icon_cache = { },
     mobdb_icon_cache = { },
@@ -1950,6 +1951,19 @@ local function buff_name(buff_id)
     return name;
 end
 
+function status_description(status_id)
+    status_id = tonumber(status_id) or 0;
+    if (state.status_description_cache[status_id] ~= nil) then
+        return state.status_description_cache[status_id];
+    end
+
+    local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
+    local resource = resources ~= nil and safe_read(function () return resources:GetStatusIconByIndex(status_id); end, nil) or nil;
+    local description = resource ~= nil and clean_string(safe_read(function () return resource.Description[1]; end, '')) or '';
+    state.status_description_cache[status_id] = description;
+    return description;
+end
+
 function normalized_status_name(name)
     name = clean_string(name):lower():gsub('%s+', ' ');
     if (#name == 0) then
@@ -2594,6 +2608,7 @@ local function missing_buff_icon_items(unit, active_keys)
         local icon = definition ~= nil and load_buff_icon(definition.file) or nil;
         if (definition ~= nil and active_keys[key] ~= true) then
             table.insert(items, {
+                id = definition.id,
                 key = key,
                 name = definition.label,
                 handle = icon ~= nil and icon.handle or nil,
@@ -2716,6 +2731,7 @@ local function target_debuff_icon_items(unit)
         local icon = definition ~= nil and load_status_icon(definition.id) or nil;
         if (icon ~= nil and active_keys[key] ~= true) then
             table.insert(items, {
+                id = definition.id,
                 key = key,
                 name = definition.label,
                 handle = icon.handle,
@@ -4202,11 +4218,19 @@ end
 
 local function draw_buff_item_tooltip(item)
     imgui.BeginTooltip();
+    imgui.PushTextWrapPos(340);
     if (item.state == 'missing') then
         imgui.TextColored(COLORS.warning, ('Missing: %s'):fmt(item.name));
     else
-        imgui.Text(item.name);
+        imgui.TextUnformatted(item.name);
     end
+
+    local description = status_description(item.id);
+    if (#description > 0) then
+        imgui.Separator();
+        imgui.TextWrapped(description);
+    end
+    imgui.PopTextWrapPos();
     imgui.EndTooltip();
 end
 
