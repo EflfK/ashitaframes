@@ -74,6 +74,18 @@ foreach ($needle in @("status_description(item.id)", "resource.Description[1]", 
     }
 }
 
+foreach ($needle in @("GetStatusTimers()", "player_status_remaining_seconds", "monitored_signet_item", "state = 'expiring'", "signet_warning_minutes")) {
+    if (-not $lua.Contains($needle)) {
+        throw "Expected Signet reminder pattern not found: $needle"
+    }
+}
+
+foreach ($needle in @("signet_reminder_enabled", "signet_warning_minutes")) {
+    if (-not $configText.Contains($needle)) {
+        throw "Expected Signet reminder config key not found: $needle"
+    }
+}
+
 if ($lua.Contains("draw_target_mobdb_panel")) {
     throw "Intrusive standalone MobDB panel renderer must not be restored."
 }

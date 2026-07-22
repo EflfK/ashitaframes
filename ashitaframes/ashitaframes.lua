@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.5.4';
+addon.version   = '0.5.5';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -68,6 +68,8 @@ local DEFAULT_SETTINGS = {
     show_target_mobdb = true,
     hide_buff_reminders_in_towns = true,
     buff_reminder_suppressed_zone_ids = { },
+    signet_reminder_enabled = true,
+    signet_warning_minutes = 30,
     max_buffs = 8,
     party_preview_size = 6,
     mp_text_threshold = 1,
@@ -205,6 +207,9 @@ local COLORS = {
     buff_missing_bg = { 0.70, 0.05, 0.03, 0.76 },
     buff_missing_border = { 1.00, 0.10, 0.05, 1.00 },
     buff_missing_flash = { 1.00, 0.94, 0.18, 1.00 },
+    buff_expiring_bg = { 0.52, 0.28, 0.02, 0.76 },
+    buff_expiring_border = { 1.00, 0.58, 0.08, 1.00 },
+    buff_expiring_flash = { 1.00, 0.94, 0.18, 1.00 },
     mobdb_weak_bg = { 0.02, 0.18, 0.28, 0.88 },
     mobdb_weak_border = { 0.20, 0.82, 1.00, 0.92 },
     mobdb_strong_bg = { 0.30, 0.07, 0.05, 0.88 },
@@ -339,6 +344,8 @@ local LIMITS = {
     bar_height_max = 64,
     max_buffs_min = 1,
     max_buffs_max = 16,
+    signet_warning_minutes_min = 1,
+    signet_warning_minutes_max = 240,
     mp_text_threshold_min = 0,
     mp_text_threshold_max = 100,
     tp_text_threshold_min = 0,
@@ -1132,6 +1139,7 @@ local function normalize_settings(settings)
     settings.show_target_debuff_reminders = settings.show_target_debuff_reminders ~= false;
     settings.show_target_mobdb = settings.show_target_mobdb ~= false;
     settings.hide_buff_reminders_in_towns = settings.hide_buff_reminders_in_towns ~= false;
+    settings.signet_reminder_enabled = settings.signet_reminder_enabled ~= false;
 
     settings.self_window_x = clamp_int(settings.self_window_x, -2000, 4000);
     settings.self_window_y = clamp_int(settings.self_window_y, -2000, 4000);
@@ -1150,6 +1158,7 @@ local function normalize_settings(settings)
     settings.tp_bar_height = normalize_resource_bar_height(settings.tp_bar_height, DEFAULT_SETTINGS.tp_bar_height);
     settings.cast_bar_height = normalize_resource_bar_height(settings.cast_bar_height, DEFAULT_SETTINGS.cast_bar_height);
     settings.max_buffs = clamp_int(settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
+    settings.signet_warning_minutes = clamp_int(settings.signet_warning_minutes, LIMITS.signet_warning_minutes_min, LIMITS.signet_warning_minutes_max);
     settings.party_preview_size = party_size(settings.party_preview_size);
     settings.mp_text_threshold = normalize_mp_text_threshold(settings.mp_text_threshold, 1);
     settings.tp_text_threshold = normalize_tp_text_threshold(settings.tp_text_threshold, 1000);
@@ -1366,14 +1375,38 @@ local function append_buff_id(result, seen, value)
     table.insert(result, buff_id);
 end
 
+function player_status_remaining_seconds(raw_timer)
+    raw_timer = tonumber(raw_timer);
+    if (raw_timer == nil) then
+        return nil;
+    end
+    if (raw_timer == 0x7FFFFFFF) then
+        return -1;
+    end
+
+    local comparand = (os.time() - 0x3C307D70) * 60;
+    local remaining = raw_timer - comparand;
+    while (remaining < -2147483648) do
+        remaining = remaining + 0xFFFFFFFF;
+    end
+
+    if (remaining < 1) then
+        return 0;
+    end
+
+    return math.ceil(remaining / 60);
+end
+
 local function player_buffs()
     local player = safe_read(function () return AshitaCore:GetMemoryManager():GetPlayer(); end, nil);
     local icons = player ~= nil and safe_read(function () return player:GetStatusIcons(); end, nil) or nil;
+    local timers = player ~= nil and safe_read(function () return player:GetStatusTimers(); end, nil) or nil;
     local result = { };
+    local remaining = { };
     local seen = { };
 
     if (icons == nil) then
-        return result;
+        return result, remaining;
     end
 
     for index = 1, 32, 1 do
@@ -1383,9 +1416,15 @@ local function player_buffs()
         end
 
         append_buff_id(result, seen, buff_id);
+        if (buff_id ~= nil and timers ~= nil) then
+            local seconds = player_status_remaining_seconds(safe_read(function () return timers[index]; end, nil));
+            if (seconds ~= nil) then
+                remaining[tonumber(buff_id)] = seconds;
+            end
+        end
     end
 
-    return result;
+    return result, remaining;
 end
 
 local function party_status_base()
@@ -1924,15 +1963,16 @@ end
 
 local function party_member_buffs(party, index, server_id, same_zone, name)
     if (not state.settings.show_buffs or index > 5 or same_zone == false) then
-        return { };
+        return { }, { };
     end
 
     local observed = observed_buffs_for_name(name);
     if (index == 0) then
-        return merge_buff_lists(player_buffs(), observed);
+        local buffs, timers = player_buffs();
+        return merge_buff_lists(buffs, observed), timers;
     end
 
-    return merge_buff_lists(party_status_buffs(index, server_id), observed);
+    return merge_buff_lists(party_status_buffs(index, server_id), observed), { };
 end
 
 local function buff_name(buff_id)
@@ -1962,6 +2002,18 @@ function status_description(status_id)
     local description = resource ~= nil and clean_string(safe_read(function () return resource.Description[1]; end, '')) or '';
     state.status_description_cache[status_id] = description;
     return description;
+end
+
+function format_status_duration(seconds)
+    seconds = math.max(0, math.floor((tonumber(seconds) or 0) + 0.5));
+    if (seconds >= 3600) then
+        return ('%dh %dm'):fmt(math.floor(seconds / 3600), math.floor(math.fmod(seconds, 3600) / 60));
+    end
+    if (seconds >= 60) then
+        return ('%dm %ds'):fmt(math.floor(seconds / 60), math.fmod(seconds, 60));
+    end
+
+    return ('%ds'):fmt(seconds);
 end
 
 function normalized_status_name(name)
@@ -2236,6 +2288,55 @@ local function active_buff_key_lookup(buffs)
     end
 
     return lookup;
+end
+
+function monitored_signet_item(unit)
+    if (state.settings.signet_reminder_enabled ~= true or unit == nil or unit.category ~= 'self' or type(unit.buffs) ~= 'table') then
+        return nil, nil;
+    end
+
+    local signet_id = buff_id_from_name('Signet');
+    if (signet_id == nil) then
+        return nil, nil;
+    end
+
+    local active = false;
+    for _, buff_id in ipairs(unit.buffs) do
+        if (tonumber(buff_id) == signet_id) then
+            active = true;
+            break;
+        end
+    end
+
+    local icon = load_status_icon(signet_id);
+    if (icon == nil) then
+        return nil, signet_id;
+    end
+
+    if (not active) then
+        return {
+            id = signet_id,
+            name = buff_name(signet_id),
+            handle = icon.handle,
+            state = 'missing',
+            kind = 'status_reminder',
+        }, signet_id;
+    end
+
+    local remaining = type(unit.buff_timers) == 'table' and unit.buff_timers[signet_id] or nil;
+    local warning_seconds = (state.settings.signet_warning_minutes or DEFAULT_SETTINGS.signet_warning_minutes) * 60;
+    if (remaining == -1 or (remaining ~= nil and remaining > warning_seconds)) then
+        return nil, signet_id;
+    end
+
+    return {
+        id = signet_id,
+        name = buff_name(signet_id),
+        handle = icon.handle,
+        state = 'expiring',
+        kind = 'status_reminder',
+        remaining_seconds = remaining,
+    }, signet_id;
 end
 
 local function active_target_debuff_key_lookup(debuffs)
@@ -2629,6 +2730,11 @@ local function buff_icon_items(unit, missing_items)
     local max_buffs = state.settings.max_buffs or DEFAULT_SETTINGS.max_buffs;
     local active_keys = active_buff_key_lookup(unit.buffs);
     missing_items = missing_items or missing_buff_icon_items(unit, active_keys);
+    local signet_item, monitored_signet_id = monitored_signet_item(unit);
+
+    if (signet_item ~= nil and #items < max_buffs) then
+        table.insert(items, signet_item);
+    end
 
     for index = 1, #unit.buffs, 1 do
         if (#items >= max_buffs) then
@@ -2637,7 +2743,7 @@ local function buff_icon_items(unit, missing_items)
 
         local buff_id = unit.buffs[index];
         local key = buff_key_from_id(buff_id);
-        local icon = load_status_icon(buff_id);
+        local icon = buff_id ~= monitored_signet_id and load_status_icon(buff_id) or nil;
         if (icon ~= nil) then
             table.insert(items, {
                 id = buff_id,
@@ -3087,6 +3193,8 @@ local function config_text_from_settings(settings)
         ('        show_target_mobdb = %s,'):fmt(bool_text(settings.show_target_mobdb)),
         ('        hide_buff_reminders_in_towns = %s,'):fmt(bool_text(settings.hide_buff_reminders_in_towns)),
         ('        buff_reminder_suppressed_zone_ids = %s,'):fmt(zone_id_list_text(settings.buff_reminder_suppressed_zone_ids)),
+        ('        signet_reminder_enabled = %s,'):fmt(bool_text(settings.signet_reminder_enabled)),
+        ('        signet_warning_minutes = %d,'):fmt(settings.signet_warning_minutes),
         ('        max_buffs = %d,'):fmt(settings.max_buffs),
         ('        party_preview_size = %d,'):fmt(settings.party_preview_size),
         ('        mp_text_threshold = %d,'):fmt(settings.mp_text_threshold),
@@ -3627,6 +3735,7 @@ local function party_member_unit(party, index, self_zone, reminder_job, reminder
 
     hp_max = hp_max or estimate_resource_max(hp, hp_pct);
     mp_max = mp_max or estimate_resource_max(mp, mp_pct);
+    local buffs, buff_timers = party_member_buffs(party, index, server_id, same_zone, name);
 
     return {
         kind = 'party',
@@ -3650,7 +3759,8 @@ local function party_member_unit(party, index, self_zone, reminder_job, reminder
             safe_read(function () return party:GetMemberSubJob(index); end, nil),
             safe_read(function () return party:GetMemberSubJobLevel(index); end, nil)),
         cast = active_cast_for_unit(server_id, name, index == 0),
-        buffs = party_member_buffs(party, index, server_id, same_zone, name),
+        buffs = buffs,
+        buff_timers = buff_timers,
         same_zone = same_zone,
         dim = state.settings.same_zone_dim and not same_zone,
     };
@@ -4199,6 +4309,14 @@ local function draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint
 
         draw_list:AddRectFilled(min, max, color_u32(apply_alpha(COLORS.buff_missing_bg, pulse_alpha)), 4.0);
         draw_list:AddRect(min, max, color_u32(apply_alpha(border_color, alpha)), 4.0, ImDrawCornerFlags_All, border_width);
+    elseif (item.state == 'expiring') then
+        local pulse = (math.sin(os.clock() * 7.0) + 1.0) * 0.5;
+        local pulse_alpha = alpha * (0.62 + (pulse * 0.38));
+        local border_color = pulse > 0.5 and COLORS.buff_expiring_flash or COLORS.buff_expiring_border;
+        local border_width = icon_size >= 40 and 3.0 or 2.0;
+
+        draw_list:AddRectFilled(min, max, color_u32(apply_alpha(COLORS.buff_expiring_bg, pulse_alpha)), 4.0);
+        draw_list:AddRect(min, max, color_u32(apply_alpha(border_color, alpha)), 4.0, ImDrawCornerFlags_All, border_width);
     else
         draw_list:AddRectFilled(min, max, color_u32(apply_alpha(COLORS.shadow, alpha * 0.56)), 4.0);
         draw_list:AddRect(min, max, color_u32(apply_alpha(COLORS.buff_active_border, alpha)), 4.0, ImDrawCornerFlags_All, 1.0);
@@ -4221,6 +4339,13 @@ local function draw_buff_item_tooltip(item)
     imgui.PushTextWrapPos(340);
     if (item.state == 'missing') then
         imgui.TextColored(COLORS.warning, ('Missing: %s'):fmt(item.name));
+    elseif (item.state == 'expiring') then
+        imgui.TextColored(COLORS.buff_expiring_flash, ('Expiring: %s'):fmt(item.name));
+        if (item.remaining_seconds ~= nil) then
+            imgui.TextUnformatted(('Remaining: %s'):fmt(format_status_duration(item.remaining_seconds)));
+        else
+            imgui.TextColored(COLORS.text_muted, 'Remaining time unavailable');
+        end
     else
         imgui.TextUnformatted(item.name);
     end
@@ -5124,6 +5249,31 @@ function render_general_config_tab()
     end, 'buffs');
 end
 
+function render_signet_reminder_config()
+    imgui.TextColored(COLORS.accent, 'Signet Reminder');
+
+    local enabled = state.settings.signet_reminder_enabled == true;
+    if (imgui.Checkbox('Monitor Signet##ashitaframes_signet_reminder_enabled', { enabled })) then
+        state.settings.signet_reminder_enabled = not enabled;
+        mark_config_changed();
+    end
+
+    if (state.settings.signet_reminder_enabled == true) then
+        render_int_control(
+            'Warn Under',
+            'signet_warning_minutes',
+            state.settings.signet_warning_minutes,
+            LIMITS.signet_warning_minutes_min,
+            LIMITS.signet_warning_minutes_max,
+            function (value)
+                state.settings.signet_warning_minutes = clamp_int(value, LIMITS.signet_warning_minutes_min, LIMITS.signet_warning_minutes_max);
+                mark_config_changed();
+            end,
+            'min');
+        imgui.TextColored(COLORS.text_muted, 'Hidden while healthy; flashes amber near expiry and red when missing.');
+    end
+end
+
 function render_self_frame_config_tab()
     local show_self = state.settings.show_self == true;
     if (imgui.Checkbox('Show Self Frame##ashitaframes_show_self', { show_self })) then
@@ -5135,6 +5285,8 @@ function render_self_frame_config_tab()
     render_frame_layout_controls('self', 'Self Frame');
     imgui.Separator();
     render_frame_bar_controls('self', 'Self Bars');
+    imgui.Separator();
+    render_signet_reminder_config();
 end
 
 function render_party_frame_config_tab()

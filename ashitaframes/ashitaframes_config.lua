@@ -23,6 +23,8 @@ return {
         show_target_mobdb = true,
         hide_buff_reminders_in_towns = true,
         buff_reminder_suppressed_zone_ids = { },
+        signet_reminder_enabled = true,
+        signet_warning_minutes = 30,
         max_buffs = 8,
         party_preview_size = 6,
         mp_text_threshold = 1,

@@ -48,6 +48,10 @@ clean while important unit information remains visible elsewhere on screen.
   observed state, and a bounded live chat-log tail keeps trust statuses updated
   after reloads and new effects. Protect and Shell remain the initially mapped
   missing-buff reminders.
+- Monitors Signet on the self frame without spending a permanent icon slot.
+  Healthy Signet stays hidden, Signet below the configured warning threshold
+  flashes amber with its remaining time in the tooltip, and missing Signet
+  flashes red. The default warning threshold is 30 minutes.
 - Shows compact target-frame status rails: observed target buffs on the left
   and owned mapped debuffs plus missing target-debuff reminders on a matching
   right rail. Missing target-debuff reminders only flash when the spell is
@@ -195,6 +199,8 @@ return {
         show_target_mobdb = true,
         hide_buff_reminders_in_towns = true,
         buff_reminder_suppressed_zone_ids = { },
+        signet_reminder_enabled = true,
+        signet_warning_minutes = 30,
         max_buffs = 8,
         party_preview_size = 6,
         mp_text_threshold = 1,
