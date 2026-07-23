@@ -68,6 +68,22 @@ foreach ($needle in @(
     }
 }
 
+foreach ($needle in @(
+    "monster_ability_cast_info_by_id",
+    "duration = 3.0",
+    "action_type == 7",
+    "action_type ~= 7",
+    "text:match('^(.-) readies (.-)%.$')",
+    "text:match('^(.-) uses (.-)%.$')",
+    "actor_id = tonumber(existing.server_id)",
+    "state.active_casts_by_id[server_id] = nil",
+    "'mob_ability'"
+)) {
+    if (-not $lua.Contains($needle)) {
+        throw "Expected observed monster TP-move cast-bar pattern not found: $needle"
+    }
+}
+
 $outgoingPacketCalls = ([regex]::Matches($allLua, "AddOutgoingPacket")).Count
 if ($outgoingPacketCalls -ne 1) {
     throw "Expected exactly one narrowly scoped outgoing packet call; found $outgoingPacketCalls."

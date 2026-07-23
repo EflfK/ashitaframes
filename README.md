@@ -39,10 +39,13 @@ clean while important unit information remains visible elsewhere on screen.
   the pet entity for name/HP/distance and Ashita pet state for MP and TP.
 - Shows HP as the row background fill, with MP, TP, job/subjob, level, and
   same-zone dimming where Ashita exposes that data.
-- Shows configurable cast bars on self, party, pet, and target frames. The
-  local player uses Ashita cast-bar memory; other units use observed cast
-  starts with resource cast-time estimates. Cast labels show the resolved
-  spell/item name and append the observed target when available.
+- Shows configurable cast bars on self, party, pet, target, and battle-target
+  frames. The local player uses Ashita cast-bar memory; other units use
+  observed cast starts with resource cast-time estimates. Enemy TP moves such
+  as `Explosion` use the packet/log "readies" event and a three-second estimated
+  bar because FFXI does not send a per-move ready duration. Cast labels show the
+  resolved spell, item, or TP-move name and append the observed target when
+  available.
 - Shows compact party status icons for every buff and debuff reported by Ashita
   status memory, plus observed party effect messages for trusts. Status icons
   use the game's native artwork and draw in a reserved left rail so

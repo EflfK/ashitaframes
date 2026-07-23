@@ -3720,6 +3720,27 @@ function normalize_cast_actor_name(actor_name, actor_id)
     return name;
 end
 
+function monster_ability_cast_info_by_id(ability_id)
+    ability_id = tonumber(ability_id);
+    if (ability_id == nil or ability_id <= 256) then
+        return nil;
+    end
+
+    local resources = safe_read(function () return AshitaCore:GetResourceManager(); end, nil);
+    local ability = resources ~= nil and safe_read(function () return resources:GetAbilityById(ability_id); end, nil) or nil;
+    local label = cast_resource_name(ability);
+    if (#label == 0) then
+        label = 'TP Move';
+    end
+
+    return {
+        id = cast_resource_id(ability) or ability_id,
+        kind = 'mob_ability',
+        label = label,
+        duration = 3.0,
+    };
+end
+
 function normalize_cast_target_name(target_name, target_id)
     local name = clean_string(target_name);
     if ((name == '' or name == 'You') and tonumber(target_id) ~= nil) then
@@ -3756,6 +3777,10 @@ function set_active_cast(actor_id, actor_name, label, duration, kind, resource_i
     actor_id = tonumber(actor_id);
     actor_name = normalize_cast_actor_name(actor_name, actor_id);
     local name_key = cast_name_key(actor_name);
+    local existing = name_key ~= nil and state.active_casts_by_name[name_key] or nil;
+    if ((actor_id == nil or actor_id == 0) and type(existing) == 'table') then
+        actor_id = tonumber(existing.server_id);
+    end
     if ((actor_id == nil or actor_id == 0) and name_key == nil) then
         return false;
     end
@@ -3798,6 +3823,11 @@ function clear_active_cast(actor_id, actor_name)
 
     local name_key = cast_name_key(normalize_cast_actor_name(actor_name, actor_id));
     if (name_key ~= nil) then
+        local cast = state.active_casts_by_name[name_key];
+        local server_id = type(cast) == 'table' and tonumber(cast.server_id) or nil;
+        if (server_id ~= nil and server_id ~= 0) then
+            state.active_casts_by_id[server_id] = nil;
+        end
         state.active_casts_by_name[name_key] = nil;
     end
 end
@@ -6660,6 +6690,22 @@ function handle_cast_action_packet(data)
 
     local action_type = tonumber(action.action_type);
     local actor_id = tonumber(action.actor_id);
+    if (action_type == 7 and tonumber(action.param) == 0x6163) then
+        local resource_id = action_first_target_param(action);
+        local info = monster_ability_cast_info_by_id(resource_id);
+        if (info ~= nil) then
+            local target_id = action_first_target_id(action);
+            set_active_cast(
+                actor_id,
+                entity_name_by_server_id(actor_id),
+                cast_display_label(info.label, entity_name_by_server_id(target_id), target_id),
+                info.duration,
+                info.kind,
+                info.id);
+            return;
+        end
+    end
+
     if ((action_type == 8 or action_type == 9) and tonumber(action.param) == 0x6163) then
         local resource_id = action_first_target_param(action);
         local target_id = action_first_target_id(action);
@@ -6673,7 +6719,11 @@ function handle_cast_action_packet(data)
         return;
     end
 
-    if (actor_id ~= nil and state.active_casts_by_id[actor_id] ~= nil and action_type ~= 8 and action_type ~= 9) then
+    if (actor_id ~= nil
+        and state.active_casts_by_id[actor_id] ~= nil
+        and action_type ~= 7
+        and action_type ~= 8
+        and action_type ~= 9) then
         clear_active_cast(actor_id, nil);
     end
 end
@@ -7196,7 +7246,25 @@ function process_observed_cast_text(message)
         return false;
     end
 
-    local actor, spell, target = text:match('^(.-) starts casting (.-) on (.-)%.$');
+    local actor, ability = text:match('^(.-) readies (.-)%.$');
+    if (actor ~= nil and ability ~= nil) then
+        return set_active_cast(nil, actor, ability, 3.0, 'mob_ability', nil);
+    end
+
+    actor, ability = text:match('^(.-) uses (.-)%.$');
+    if (actor ~= nil and ability ~= nil) then
+        clear_active_cast(nil, actor);
+        return true;
+    end
+
+    actor = text:match("^(.-)'s readying is interrupted%.$");
+    if (actor ~= nil) then
+        clear_active_cast(nil, actor);
+        return true;
+    end
+
+    local spell, target;
+    actor, spell, target = text:match('^(.-) starts casting (.-) on (.-)%.$');
     if (actor == nil or spell == nil) then
         actor, spell = text:match('^(.-) starts casting (.-)%.$');
     end
