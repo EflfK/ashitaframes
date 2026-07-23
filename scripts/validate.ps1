@@ -80,6 +80,12 @@ foreach ($needle in @("GetStatusTimers()", "player_status_remaining_seconds", "m
     }
 }
 
+foreach ($needle in @("PARTY_SELECTION.handle_command", "PARTY_SELECTION.matches(unit)", "party_selection_border", "'/ashitaui'")) {
+    if (-not $lua.Contains($needle)) {
+        throw "Expected passive party-selection highlight pattern not found: $needle"
+    }
+}
+
 foreach ($needle in @("signet_reminder_enabled", "signet_warning_minutes")) {
     if (-not $configText.Contains($needle)) {
         throw "Expected Signet reminder config key not found: $needle"

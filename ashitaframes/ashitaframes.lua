@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.5.5';
+addon.version   = '0.6.0';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -14,6 +14,10 @@ local imgui = require('imgui');
 local mobdb = require('ashitaframes_mobdb');
 
 local d3d8_device = nil;
+PARTY_SELECTION = {
+    PROTOCOL_COMMAND = '/ashitaui',
+    TTL_SECONDS = 22.0,
+};
 
 local JOBS = {
     [0]  = '',
@@ -184,6 +188,8 @@ local COLORS = {
     row_dim = { 0.035, 0.039, 0.043, 0.46 },
     row_border = { 0.76, 0.61, 0.32, 0.36 },
     row_border_active = { 1.00, 0.82, 0.42, 0.72 },
+    party_selection_fill = { 0.62, 0.42, 1.00, 0.16 },
+    party_selection_border = { 0.86, 0.72, 1.00, 1.00 },
     hp = { 0.25, 0.76, 0.35, 0.90 },
     mobdb_hp = { 0.29, 0.46, 0.34, 0.94 },
     hp_low = { 0.92, 0.30, 0.22, 0.92 },
@@ -398,7 +404,66 @@ local state = {
     pet_window_y = 230,
     target_window_x = 36,
     target_window_y = 296,
+    party_selection = nil,
 };
+
+function PARTY_SELECTION.clear(token)
+    local selection = state.party_selection;
+    if (selection == nil or token == nil or tostring(selection.token) == tostring(token)) then
+        state.party_selection = nil;
+    end
+end
+
+function PARTY_SELECTION.set(token, slot, server_id)
+    slot = tonumber(slot);
+    server_id = tonumber(server_id);
+    if (token == nil or slot == nil or slot < 0 or slot > 5 or server_id == nil or server_id < 0) then
+        return false;
+    end
+
+    state.party_selection = {
+        token = tostring(token),
+        slot = math.floor(slot),
+        server_id = math.floor(server_id),
+        expires_at = os.clock() + PARTY_SELECTION.TTL_SECONDS,
+    };
+    return true;
+end
+
+function PARTY_SELECTION.prune()
+    local selection = state.party_selection;
+    if (selection ~= nil and os.clock() >= (tonumber(selection.expires_at) or 0)) then
+        state.party_selection = nil;
+    end
+end
+
+function PARTY_SELECTION.matches(unit)
+    PARTY_SELECTION.prune();
+    local selection = state.party_selection;
+    if (selection == nil or type(unit) ~= 'table' or unit.kind ~= 'party') then
+        return false;
+    end
+
+    return tonumber(unit.index) == selection.slot
+        and tonumber(unit.server_id) == selection.server_id;
+end
+
+function PARTY_SELECTION.handle_command(e, args)
+    local command = tostring(args[1] or ''):lower();
+    local topic = tostring(args[2] or ''):lower();
+    if (#args < 3 or command ~= PARTY_SELECTION.PROTOCOL_COMMAND or topic ~= 'partyselect') then
+        return false;
+    end
+
+    e.blocked = true;
+    local action = tostring(args[3] or ''):lower();
+    if (action == 'set' and #args >= 6) then
+        PARTY_SELECTION.set(args[4], args[5], args[6]);
+    elseif (action == 'clear' and #args >= 4) then
+        PARTY_SELECTION.clear(args[4]);
+    end
+    return true;
+end
 
 local function flag(value)
     return value or 0;
@@ -4866,6 +4931,10 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
     draw_list:AddRectFilled({ x, y }, { x + width, y + row_height }, color_u32(apply_alpha(row_bg, alpha)), 4.0);
     draw_resource_bars(draw_list, unit, layout, x + buff_rail_width, y, math.max(1, width - buff_rail_width - debuff_rail_width), row_height, alpha);
     draw_list:AddRect({ x, y }, { x + width, y + row_height }, color_u32(apply_alpha(border, alpha)), 4.0, ImDrawCornerFlags_All, 1.0);
+    if (PARTY_SELECTION.matches(unit)) then
+        draw_list:AddRectFilled({ x, y }, { x + width, y + row_height }, color_u32(apply_alpha(COLORS.party_selection_fill, alpha)), 4.0);
+        draw_list:AddRect({ x, y }, { x + width, y + row_height }, color_u32(apply_alpha(COLORS.party_selection_border, alpha)), 4.0, ImDrawCornerFlags_All, 2.5);
+    end
 
     draw_buff_icon_rail(unit, x, y, row_height, alpha, buff_items, buff_missing_items);
     draw_target_buff_icon_rail(unit, x, y, row_height, alpha, target_buff_items);
@@ -6761,6 +6830,9 @@ end
 
 function handle_command(e)
     local args = e.command:args();
+    if (PARTY_SELECTION.handle_command(e, args)) then
+        return;
+    end
     local name = clean_string(args[1]):lower();
 
     if (name ~= '/ashitaframes' and name ~= '/aframes') then
@@ -6841,6 +6913,7 @@ ashita.events.register('incoming_packet', 'incoming_packet_cb', function (e)
 end);
 
 ashita.events.register('d3d_present', 'present_cb', function ()
+    PARTY_SELECTION.prune();
     poll_observed_buffs_from_chat_log();
     prune_observed_target_buffs();
     prune_observed_target_debuffs();

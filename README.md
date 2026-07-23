@@ -26,6 +26,10 @@ clean while important unit information remains visible elsewhere on screen.
 - Draws draggable party frames for party members other than yourself, with
   optional alliance slots. Trust slots that linger in Ashita memory after
   zoning are hidden once they are no longer in your current zone.
+- Highlights the self or party row temporarily selected by AshitaBars' attended
+  party picker. AshitaFrames only consumes blocked, process-local
+  `/ashitaui partyselect` UI-state events; it never chooses a target or sends
+  the resulting gameplay command.
 - Draws a draggable pet frame when your local player has an active pet, using
   the pet entity for name/HP/distance and Ashita pet state for MP and TP.
 - Shows HP as the row background fill, with MP, TP, job/subjob, level, and
@@ -68,7 +72,8 @@ clean while important unit information remains visible elsewhere on screen.
 This addon is display-only. Keep it in the CatsEyeXI T0/T2 lane:
 
 - Allowed: local UI drawing, display-only party/target/entity information,
-  local config toggles.
+  local config toggles, and passive display of temporary addon-owned selection
+  state.
 - Not allowed here: `/ma`, `/ja`, `/item`, `/target`, `/attack`, command
   queuing, packet injection, input simulation, unattended behavior, timers that
   choose actions, or state-driven automation.
