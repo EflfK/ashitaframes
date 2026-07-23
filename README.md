@@ -57,10 +57,11 @@ clean while important unit information remains visible elsewhere on screen.
   flashes amber with its remaining time in the tooltip, and missing Signet
   flashes red. The default warning threshold is 30 minutes.
 - Shows compact target-frame status rails: observed target buffs on the left
-  and owned mapped debuffs plus missing target-debuff reminders on a matching
-  right rail. Missing target-debuff reminders only flash when the spell is
-  learned, usable by the current main/sub job, and off cooldown. Dia, Paralyze,
-  and Slow are mapped first.
+  and all packet-observed debuffs from spells and abilities on a right rail
+  that expands into additional columns instead of clipping active effects.
+  Missing target-debuff reminders only flash when the spell is learned, usable
+  by the current main/sub job, and off cooldown. Dia, Paralyze, and Slow remain
+  the initially mapped reminder set.
 - Includes a persistent in-game configuration window for visibility, locking,
   sizing, opacity, self/party/pet/target display, party status display, target
   debuff display, missing-buff reminders, and alliance display.
@@ -344,11 +345,16 @@ current main/sub job.
 zones. Add zone ids to `buff_reminder_suppressed_zone_ids` to hide missing
 reminders in additional zones.
 
-`target_debuff_reminders` is keyed by your current main job. Supported target
+`target_debuff_reminders` is keyed by your current main job. Active debuffs
+applied by players, trusts, pets, or monsters are observed from incoming action
+and wear-off packets and shown with their native status icons. Because FFXI
+does not expose a complete target-status snapshot to the client, effects already
+active before AshitaFrames loads may not appear until they are applied again.
+Supported target
 debuff reminder keys are currently `dia`, `paralyze`, and `slow`; configured
 reminders only display on attackable targets when the spell is learned, usable
 on your current main/sub job, and not on cooldown. Active target debuff icons
-are owned state observed from local player casts.
+are display-only observed state.
 
 ## Development
 

@@ -80,6 +80,12 @@ foreach ($needle in @("GetStatusTimers()", "player_status_remaining_seconds", "m
     }
 }
 
+foreach ($needle in @("TARGET_DEBUFF_EFFECT_OVERRIDES", "target_debuff_status_id(target_action.param)", "target_debuff_rail_width", "status_icon_rail_slots_per_column")) {
+    if (-not $lua.Contains($needle)) {
+        throw "Expected all-target-debuff display pattern not found: $needle"
+    }
+}
+
 foreach ($needle in @("PARTY_SELECTION.handle_command", "PARTY_SELECTION.matches(unit)", "party_selection_border", "'/ashitaui'")) {
     if (-not $lua.Contains($needle)) {
         throw "Expected passive party-selection highlight pattern not found: $needle"

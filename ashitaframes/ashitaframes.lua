@@ -292,6 +292,23 @@ local TARGET_DEBUFF_STATUS_IDS = {
     [13] = 'slow',
     [134] = 'dia',
 };
+TARGET_DEBUFF_EFFECT_OVERRIDES = {
+    [23] = 134,  -- Dia
+    [24] = 134,  -- Dia II
+    [25] = 134,  -- Dia III
+    [26] = 134,  -- Dia IV
+    [27] = 134,  -- Dia V
+    [33] = 134,  -- Diaga
+    [230] = 135, -- Bio
+    [231] = 135, -- Bio II
+    [232] = 135, -- Bio III
+    [233] = 135, -- Bio IV
+    [234] = 135, -- Bio V
+    [201] = 386, -- Quickstep
+    [202] = 391, -- Box Step
+    [203] = 396, -- Stutter Step
+    [312] = 448, -- Feather Step
+};
 local TARGET_DEBUFF_REMINDER_PROFILE_DEFAULT = {
     enabled = true,
     debuffs = { 'dia', 'paralyze', 'slow' },
@@ -1721,6 +1738,18 @@ local function target_debuff_id_for_key(key)
     return definition ~= nil and tonumber(definition.id) or nil;
 end
 
+function target_debuff_status_id(value)
+    local status_id = tonumber(value);
+    if (status_id == nil) then
+        status_id = target_debuff_id_for_key(value);
+    end
+    if (status_id == nil or status_id <= 0 or status_id == 255 or status_id > 0x3FF) then
+        return nil;
+    end
+
+    return math.floor(status_id);
+end
+
 local function prune_observed_target_debuffs()
     local now = os.time();
     for target_id, entry in pairs(state.observed_target_debuffs) do
@@ -1762,7 +1791,7 @@ local function prune_observed_target_debuffs()
     end
 end
 
-local function observed_target_debuff_key_lookup(server_id)
+local function observed_target_debuff_status_lookup(server_id)
     prune_observed_target_debuffs();
 
     local target_id = tonumber(server_id);
@@ -1772,9 +1801,9 @@ local function observed_target_debuff_key_lookup(server_id)
         return result;
     end
 
-    for key, value in pairs(entry) do
+    for status_id, value in pairs(entry) do
         if (type(value) == 'table' and tonumber(value.expires_at) ~= nil and value.expires_at > os.time()) then
-            result[key] = true;
+            result[tonumber(status_id) or status_id] = true;
         end
     end
 
@@ -1791,9 +1820,9 @@ function observed_target_debuff_name_lookup(name)
         return result;
     end
 
-    for key, value in pairs(entry) do
+    for status_id, value in pairs(entry) do
         if (type(value) == 'table' and tonumber(value.expires_at) ~= nil and value.expires_at > os.time()) then
-            result[key] = true;
+            result[tonumber(status_id) or status_id] = true;
         end
     end
 
@@ -1801,19 +1830,21 @@ function observed_target_debuff_name_lookup(name)
 end
 
 function observed_target_debuffs_for_unit(server_id, name)
-    local active = observed_target_debuff_key_lookup(server_id);
-    for key, enabled in pairs(observed_target_debuff_name_lookup(name)) do
+    local active = observed_target_debuff_status_lookup(server_id);
+    for status_id, enabled in pairs(observed_target_debuff_name_lookup(name)) do
         if (enabled == true) then
-            active[key] = true;
+            active[status_id] = true;
         end
     end
 
     local result = { };
     local seen = { };
 
-    for key, _ in pairs(active) do
-        append_buff_id(result, seen, target_debuff_id_for_key(key));
+    for status_id, _ in pairs(active) do
+        append_buff_id(result, seen, status_id);
     end
+
+    table.sort(result);
 
     return result;
 end
@@ -2869,18 +2900,12 @@ local function target_debuff_icon_items(unit)
         return items;
     end
 
-    local max_buffs = state.settings.max_buffs or DEFAULT_SETTINGS.max_buffs;
     local active_keys = active_target_debuff_key_lookup(unit.debuffs);
 
     for index = 1, #unit.debuffs, 1 do
-        if (#items >= max_buffs) then
-            break;
-        end
-
         local debuff_id = unit.debuffs[index];
         local key = target_debuff_key_from_id(debuff_id);
-        local definition = key ~= nil and TARGET_DEBUFF_DEFINITIONS[key] or nil;
-        local icon = definition ~= nil and load_status_icon(definition.id) or nil;
+        local icon = load_status_icon(debuff_id);
         if (icon ~= nil) then
             table.insert(items, {
                 id = debuff_id,
@@ -2894,10 +2919,6 @@ local function target_debuff_icon_items(unit)
     end
 
     for _, key in ipairs(target_debuff_reminder_keys(unit)) do
-        if (#items >= max_buffs) then
-            break;
-        end
-
         local definition = TARGET_DEBUFF_DEFINITIONS[key];
         local icon = definition ~= nil and load_status_icon(definition.id) or nil;
         if (icon ~= nil and active_keys[key] ~= true) then
@@ -4473,7 +4494,13 @@ local function draw_buff_missing_badge(draw_list, x, y, alpha, items)
     end
 end
 
-function draw_status_icon_rail(unit, x, y, row_height, alpha, items, missing_items, align_right)
+function status_icon_rail_slots_per_column(row_height, missing_count)
+    local badge_reserved = (tonumber(missing_count) or 0) > 0 and (BUFF_RAIL.badge_height + BUFF_RAIL.icon_gap) or 0;
+    local available_height = row_height - 16 - badge_reserved;
+    return math.max(1, math.floor((available_height + BUFF_RAIL.icon_gap) / (BUFF_RAIL.icon_size + BUFF_RAIL.icon_gap)));
+end
+
+function draw_status_icon_rail(unit, x, y, row_height, alpha, items, missing_items, align_right, rail_width)
     items = items or { };
     missing_items = missing_items or { };
     if (#items == 0 and #missing_items == 0) then
@@ -4482,18 +4509,20 @@ function draw_status_icon_rail(unit, x, y, row_height, alpha, items, missing_ite
 
     local draw_list = imgui.GetWindowDrawList();
     local tint = unit.dim and { 0.62, 0.62, 0.62, 0.62 } or { 1.00, 1.00, 1.00, 1.00 };
+    rail_width = math.max(BUFF_RAIL.width, tonumber(rail_width) or BUFF_RAIL.width);
+    local columns = math.max(1, math.floor(rail_width / BUFF_RAIL.width));
     local icon_x = x + math.floor((BUFF_RAIL.width - BUFF_RAIL.icon_size) / 2);
     local icon_y = y + 8;
-    local badge_reserved = #missing_items > 0 and (BUFF_RAIL.badge_height + BUFF_RAIL.icon_gap) or 0;
-    local icon_bottom = y + row_height - 8 - badge_reserved;
-    local max_slots = math.max(1, math.floor(((icon_bottom - icon_y) + BUFF_RAIL.icon_gap) / (BUFF_RAIL.icon_size + BUFF_RAIL.icon_gap)));
+    local slots_per_column = status_icon_rail_slots_per_column(row_height, #missing_items);
+    local max_slots = slots_per_column * columns;
+    local slot_index = 0;
     local display_items = { };
 
-    draw_list:AddRectFilled({ x + 1, y + 1 }, { x + BUFF_RAIL.width - 1, y + row_height - 1 }, color_u32(apply_alpha(COLORS.shadow, alpha * 0.22)), 3.0);
+    draw_list:AddRectFilled({ x + 1, y + 1 }, { x + rail_width - 1, y + row_height - 1 }, color_u32(apply_alpha(COLORS.shadow, alpha * 0.22)), 3.0);
     if (align_right == true) then
         draw_list:AddLine({ x, y + 5 }, { x, y + row_height - 5 }, color_u32(apply_alpha(COLORS.row_border, alpha * 0.75)), 1.0);
     else
-        draw_list:AddLine({ x + BUFF_RAIL.width - 1, y + 5 }, { x + BUFF_RAIL.width - 1, y + row_height - 5 }, color_u32(apply_alpha(COLORS.row_border, alpha * 0.75)), 1.0);
+        draw_list:AddLine({ x + rail_width - 1, y + 5 }, { x + rail_width - 1, y + row_height - 5 }, color_u32(apply_alpha(COLORS.row_border, alpha * 0.75)), 1.0);
     end
 
     for _, item in ipairs(items) do
@@ -4517,7 +4546,11 @@ function draw_status_icon_rail(unit, x, y, row_height, alpha, items, missing_ite
             draw_buff_item_tooltip(item);
         end
 
-        icon_y = icon_y + BUFF_RAIL.icon_size + BUFF_RAIL.icon_gap;
+        slot_index = slot_index + 1;
+        local column = math.floor(slot_index / slots_per_column);
+        local row = math.fmod(slot_index, slots_per_column);
+        icon_x = x + (column * BUFF_RAIL.width) + math.floor((BUFF_RAIL.width - BUFF_RAIL.icon_size) / 2);
+        icon_y = y + 8 + (row * (BUFF_RAIL.icon_size + BUFF_RAIL.icon_gap));
         max_slots = max_slots - 1;
     end
 
@@ -4551,6 +4584,15 @@ function target_debuff_rail_visible(unit, items)
     return state.settings.show_target_debuffs and target_debuff_target_eligible(unit) and type(items) == 'table' and #items > 0;
 end
 
+function target_debuff_rail_width(unit, items, row_height)
+    if (not target_debuff_rail_visible(unit, items)) then
+        return 0;
+    end
+
+    local slots_per_column = status_icon_rail_slots_per_column(row_height, 0);
+    return math.max(1, math.ceil(#items / slots_per_column)) * BUFF_RAIL.width;
+end
+
 function draw_target_buff_icon_rail(unit, x, y, row_height, alpha, items)
     items = items or target_buff_icon_items(unit);
     if (not target_buff_rail_visible(unit, items)) then
@@ -4560,13 +4602,13 @@ function draw_target_buff_icon_rail(unit, x, y, row_height, alpha, items)
     draw_status_icon_rail(unit, x, y, row_height, alpha, items, { }, false);
 end
 
-function draw_target_debuff_icon_rail(unit, x, y, row_height, alpha, items)
+function draw_target_debuff_icon_rail(unit, x, y, row_height, alpha, items, rail_width)
     items = items or target_debuff_icon_items(unit);
     if (not target_debuff_rail_visible(unit, items)) then
         return;
     end
 
-    draw_status_icon_rail(unit, x, y, row_height, alpha, items, { }, true);
+    draw_status_icon_rail(unit, x, y, row_height, alpha, items, { }, true, rail_width);
 end
 
 function active_resource_bar_height(unit, layout)
@@ -4924,7 +4966,7 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
             buff_rail_width = BUFF_RAIL.width;
         end
         if (target_debuff_rail_visible(unit, target_debuff_items)) then
-            debuff_rail_width = BUFF_RAIL.width;
+            debuff_rail_width = target_debuff_rail_width(unit, target_debuff_items, row_height);
         end
     end
 
@@ -4938,7 +4980,7 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
 
     draw_buff_icon_rail(unit, x, y, row_height, alpha, buff_items, buff_missing_items);
     draw_target_buff_icon_rail(unit, x, y, row_height, alpha, target_buff_items);
-    draw_target_debuff_icon_rail(unit, x + width - BUFF_RAIL.width, y, row_height, alpha, target_debuff_items);
+    draw_target_debuff_icon_rail(unit, x + width - debuff_rail_width, y, row_height, alpha, target_debuff_items, debuff_rail_width);
     if (unit.kind == 'target') then
         draw_target_mobdb_overlay(unit, x, y, width, row_height, alpha, buff_rail_width, debuff_rail_width);
     end
@@ -5797,11 +5839,15 @@ end
 
 local TARGET_DEBUFF_APPLY_MESSAGES = {
     [2] = true,
+    [127] = true,
     [236] = true,
     [237] = true,
     [252] = true,
     [268] = true,
     [271] = true,
+    [327] = true,
+    [519] = true,
+    [520] = true,
 };
 local TARGET_DEBUFF_OFF_MESSAGES = {
     [64] = true,
@@ -5846,20 +5892,21 @@ function target_debuff_duration_seconds(key, spell_id)
     end
 
     local definition = key ~= nil and TARGET_DEBUFF_DEFINITIONS[key] or nil;
-    return clamp_int(definition ~= nil and definition.duration_seconds or 120, 1, 86400);
+    return clamp_int(definition ~= nil and definition.duration_seconds or 600, 1, 86400);
 end
 
-function set_observed_target_debuff(server_id, key, enabled, spell_id)
+function set_observed_target_debuff(server_id, key_or_status_id, enabled, spell_id)
     local target_id = tonumber(server_id);
-    key = normalize_target_debuff_key(key);
-    if (target_id == nil or target_id == 0 or key == nil or target_debuff_id_for_key(key) == nil) then
+    local key = normalize_target_debuff_key(key_or_status_id);
+    local status_id = target_debuff_status_id(key_or_status_id);
+    if (target_id == nil or target_id == 0 or status_id == nil) then
         return false;
     end
 
     if (enabled == true) then
         state.observed_target_debuffs[target_id] = state.observed_target_debuffs[target_id] or { };
-        state.observed_target_debuffs[target_id][key] = {
-            status_id = target_debuff_id_for_key(key),
+        state.observed_target_debuffs[target_id][status_id] = {
+            status_id = status_id,
             spell_id = tonumber(spell_id),
             expires_at = os.time() + target_debuff_duration_seconds(key, spell_id),
         };
@@ -5871,7 +5918,7 @@ function set_observed_target_debuff(server_id, key, enabled, spell_id)
         return false;
     end
 
-    entry[key] = nil;
+    entry[status_id] = nil;
     if (next(entry) == nil) then
         state.observed_target_debuffs[target_id] = nil;
     end
@@ -5879,17 +5926,18 @@ function set_observed_target_debuff(server_id, key, enabled, spell_id)
     return true;
 end
 
-function set_observed_target_debuff_name(name, key, enabled, spell_id)
+function set_observed_target_debuff_name(name, key_or_status_id, enabled, spell_id)
     local name_key = observed_target_name_key(name);
-    key = normalize_target_debuff_key(key);
-    if (name_key == nil or key == nil or target_debuff_id_for_key(key) == nil) then
+    local key = normalize_target_debuff_key(key_or_status_id);
+    local status_id = target_debuff_status_id(key_or_status_id);
+    if (name_key == nil or status_id == nil) then
         return false;
     end
 
     if (enabled == true) then
         state.observed_target_debuff_names[name_key] = state.observed_target_debuff_names[name_key] or { };
-        state.observed_target_debuff_names[name_key][key] = {
-            status_id = target_debuff_id_for_key(key),
+        state.observed_target_debuff_names[name_key][status_id] = {
+            status_id = status_id,
             spell_id = tonumber(spell_id),
             expires_at = os.time() + target_debuff_duration_seconds(key, spell_id),
         };
@@ -5901,7 +5949,7 @@ function set_observed_target_debuff_name(name, key, enabled, spell_id)
         return false;
     end
 
-    entry[key] = nil;
+    entry[status_id] = nil;
     if (next(entry) == nil) then
         state.observed_target_debuff_names[name_key] = nil;
     end
@@ -5920,21 +5968,16 @@ function clear_observed_target_debuff_name(name)
 end
 
 function clear_observed_target_debuff_name_status(name, status)
-    local key = normalize_target_debuff_key(status);
-    if (key == nil) then
+    local status_id = buff_id_from_name(status) or target_debuff_status_id(status);
+    if (status_id == nil) then
         return false;
     end
 
-    return set_observed_target_debuff_name(name, key, false);
+    return set_observed_target_debuff_name(name, status_id, false);
 end
 
 function clear_observed_target_debuff_status(server_id, status_id)
-    local key = target_debuff_key_from_id(status_id);
-    if (key == nil) then
-        return false;
-    end
-
-    return set_observed_target_debuff(server_id, key, false);
+    return set_observed_target_debuff(server_id, status_id, false);
 end
 
 function set_observed_target_buff(server_id, status_id, enabled)
@@ -6161,22 +6204,28 @@ end
 
 function handle_target_debuff_action_packet(data)
     local action = parse_action_packet(data);
-    local player_id = local_player_server_id();
-    if (action == nil or player_id == nil or tonumber(action.actor_id) ~= player_id or tonumber(action.action_type) ~= 4) then
+    if (action == nil) then
         return;
     end
 
-    local spell_id_value = tonumber(action.param);
-    local key = TARGET_DEBUFF_SPELL_IDS[spell_id_value];
-    if (key == nil) then
+    local action_type = tonumber(action.action_type);
+    if (action_type ~= 3 and action_type ~= 4 and action_type ~= 14) then
         return;
     end
 
+    local resource_id = tonumber(action.param);
+    local override_status_id = TARGET_DEBUFF_EFFECT_OVERRIDES[resource_id];
     for _, target in ipairs(action.targets or { }) do
         for _, target_action in ipairs(target.actions or { }) do
             local message = tonumber(target_action.message);
             if (TARGET_DEBUFF_APPLY_MESSAGES[message] == true) then
-                set_observed_target_debuff(target.id, key, true, spell_id_value);
+                local status_id = override_status_id;
+                if (status_id == nil and message ~= 2 and message ~= 252) then
+                    status_id = target_debuff_status_id(target_action.param);
+                end
+                if (status_id ~= nil) then
+                    set_observed_target_debuff(target.id, status_id, true, action_type == 4 and resource_id or nil);
+                end
             end
         end
     end
