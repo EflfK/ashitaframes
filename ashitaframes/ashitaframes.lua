@@ -1,7 +1,7 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.7.0';
-addon.desc      = 'Read-only party and target unit frames for Ashita.';
+addon.version   = '0.8.0';
+addon.desc      = 'Party and target unit frames for Ashita with attended self-buff cancellation.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
 require('common');
@@ -17,6 +17,9 @@ local d3d8_device = nil;
 PARTY_SELECTION = {
     PROTOCOL_COMMAND = '/ashitaui',
     TTL_SECONDS = 22.0,
+};
+SELF_BUFF_CANCELLATION = {
+    PACKET_ID = 0xF1,
 };
 
 local JOBS = {
@@ -1557,6 +1560,55 @@ local function player_buffs()
     end
 
     return result, remaining;
+end
+
+function SELF_BUFF_CANCELLATION.is_self_buff(unit, item)
+    return type(unit) == 'table'
+        and unit.kind == 'party'
+        and tonumber(unit.index) == 0
+        and type(item) == 'table'
+        and item.state ~= 'missing'
+        and tonumber(item.id) ~= nil;
+end
+
+function SELF_BUFF_CANCELLATION.is_active(status_id)
+    status_id = math.floor(tonumber(status_id) or 0);
+    if (status_id <= 0 or status_id > 0x3FF) then
+        return false;
+    end
+
+    local buffs = player_buffs();
+    for _, buff_id in ipairs(buffs) do
+        if (tonumber(buff_id) == status_id) then
+            return true;
+        end
+    end
+
+    return false;
+end
+
+function SELF_BUFF_CANCELLATION.cancel(status_id)
+    status_id = math.floor(tonumber(status_id) or 0);
+    if (not SELF_BUFF_CANCELLATION.is_active(status_id)) then
+        return false;
+    end
+
+    local packet_manager = safe_read(function () return AshitaCore:GetPacketManager(); end, nil);
+    if (packet_manager == nil) then
+        log_error(('Could not remove status #%d: packet manager unavailable.'):fmt(status_id));
+        return false;
+    end
+
+    local packet = struct.pack('bbbbhbb', SELF_BUFF_CANCELLATION.PACKET_ID, 0x04, 0x00, 0x00, status_id, 0x00, 0x00):totable();
+    local sent, err = pcall(function ()
+        packet_manager:AddOutgoingPacket(SELF_BUFF_CANCELLATION.PACKET_ID, packet);
+    end);
+    if (not sent) then
+        log_error(('Could not remove status #%d: %s'):fmt(status_id, clean_string(err)));
+        return false;
+    end
+
+    return true;
 end
 
 local function party_status_base()
@@ -4667,7 +4719,7 @@ local function draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint
     end
 end
 
-local function draw_buff_item_tooltip(item)
+local function draw_buff_item_tooltip(unit, item)
     imgui.BeginTooltip();
     imgui.PushTextWrapPos(340);
     if (item.state == 'missing') then
@@ -4687,6 +4739,10 @@ local function draw_buff_item_tooltip(item)
     if (#description > 0) then
         imgui.Separator();
         imgui.TextWrapped(description);
+    end
+    if (SELF_BUFF_CANCELLATION.is_self_buff(unit, item)) then
+        imgui.Separator();
+        imgui.TextColored(COLORS.text_muted, 'Right-click to remove.');
     end
     imgui.PopTextWrapPos();
     imgui.EndTooltip();
@@ -4789,8 +4845,13 @@ function draw_status_icon_rail(unit, x, y, row_height, alpha, items, missing_ite
         end
 
         draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint, BUFF_RAIL.icon_size);
-        if (imgui.IsItemHovered()) then
-            draw_buff_item_tooltip(item);
+        local item_hovered = imgui.IsItemHovered();
+        local item_right_clicked = imgui.IsItemClicked(1);
+        if (item_hovered) then
+            draw_buff_item_tooltip(unit, item);
+        end
+        if (item_hovered and item_right_clicked and SELF_BUFF_CANCELLATION.is_self_buff(unit, item)) then
+            SELF_BUFF_CANCELLATION.cancel(item.id);
         end
 
         slot_index = slot_index + 1;

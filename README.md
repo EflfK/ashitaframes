@@ -1,6 +1,7 @@
 # AshitaFrames
 
-Read-only unit frame overlay for Ashita v4 on CatsEyeXI.
+Unit frame overlay for Ashita v4 on CatsEyeXI, with attended self-buff
+cancellation.
 
 AshitaFrames is an experimental UI addon intended to pair with native name
 hiding addons such as `noname`. It draws compact party/alliance and target
@@ -69,24 +70,32 @@ clean while important unit information remains visible elsewhere on screen.
 - Includes a persistent in-game configuration window for visibility, locking,
   sizing, opacity, self/party/pet/target display, party status display, target
   debuff display, missing-buff reminders, and alliance display.
-- Provides local UI commands only. It does not target, cast, click-cast, send
-  gameplay commands, inject packets, write memory, or automate actions.
+- Right-clicking an active buff on the self frame removes that one status,
+  matching the manual action available through FFXI's vanilla buff UI.
+- Other than that attended self-buff action, it does not target, cast,
+  click-cast, queue gameplay commands, write memory, or automate actions.
 
 ## Safety Boundary
 
-This addon is display-only. Keep it in the CatsEyeXI T0/T2 lane:
+The display remains in the CatsEyeXI T0/T2 lane, while manual self-buff
+cancellation is a narrowly scoped T1 attended action:
 
 - Allowed: local UI drawing, display-only party/target/entity information,
   local config toggles, and passive display of temporary addon-owned selection
   state.
+- Active behavior: one right-click on one currently active self buff sends the
+  same status-cancel request used by the vanilla UI. Party and target buffs
+  cannot be clicked, missing-buff reminders cannot be clicked, and the status
+  is revalidated immediately before the request is sent.
 - Not allowed here: `/ma`, `/ja`, `/item`, `/target`, `/attack`, command
-  queuing, packet injection, input simulation, unattended behavior, timers that
-  choose actions, or state-driven automation.
+  queuing, arbitrary packet injection, input simulation, unattended behavior,
+  timers that choose actions, or state-driven automation.
 
-If click-casting or frame-click targeting is ever considered, treat that as a
-separate active-helper design and get CatsEyeXI policy review before normal use.
-Right-click buff cancellation belongs in the same active-helper category unless
-it is delegated to an approved addon; AshitaFrames does not do it.
+CatsEyeXI classifies on-demand status cancellation as T1 and requires each
+active addon to be approved individually. Get CatsEyeXI staff approval for this
+AshitaFrames version before normal use. If click-casting or frame-click
+targeting is ever considered, treat that as a separate active-helper design and
+obtain another policy review.
 
 ## Install
 

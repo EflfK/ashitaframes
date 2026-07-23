@@ -38,7 +38,6 @@ foreach ($needle in $required) {
 
 $forbidden = @(
     "QueueCommand",
-    "AddOutgoingPacket",
     "AddIncomingPacket",
     "ashita.memory.write_",
     "/ma ",
@@ -52,6 +51,26 @@ foreach ($needle in $forbidden) {
     if ($allLua.Contains($needle)) {
         throw "Forbidden active-helper surface found in addon: $needle"
     }
+}
+
+foreach ($needle in @(
+    "unit.kind == 'party'",
+    "tonumber(unit.index) == 0",
+    "item.state ~= 'missing'",
+    "SELF_BUFF_CANCELLATION.is_active(status_id)",
+    "local item_right_clicked = imgui.IsItemClicked(1)",
+    "item_hovered and item_right_clicked and SELF_BUFF_CANCELLATION.is_self_buff(unit, item)",
+    "struct.pack('bbbbhbb', SELF_BUFF_CANCELLATION.PACKET_ID, 0x04, 0x00, 0x00, status_id, 0x00, 0x00)",
+    "packet_manager:AddOutgoingPacket(SELF_BUFF_CANCELLATION.PACKET_ID, packet)"
+)) {
+    if (-not $lua.Contains($needle)) {
+        throw "Expected attended self-buff cancellation guard not found: $needle"
+    }
+}
+
+$outgoingPacketCalls = ([regex]::Matches($allLua, "AddOutgoingPacket")).Count
+if ($outgoingPacketCalls -ne 1) {
+    throw "Expected exactly one narrowly scoped outgoing packet call; found $outgoingPacketCalls."
 }
 
 foreach ($needle in @("addons/mobdb/data/", "Modifiers", "Immunities", "Drops", "Spells")) {
