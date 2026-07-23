@@ -86,6 +86,27 @@ foreach ($needle in @("TARGET_DEBUFF_EFFECT_OVERRIDES", "target_debuff_status_id
     }
 }
 
+foreach ($needle in @(
+    "show_battle_targets",
+    "collect_battle_target_units",
+    "scan_claimed_battle_targets",
+    "handle_battle_target_action_packet",
+    "render_battle_targets",
+    "render_battle_target_config_tab",
+    "battle_target_max_entries",
+    "GetClaimStatus(index)"
+)) {
+    if (-not $lua.Contains($needle)) {
+        throw "Expected passive battle-target frame pattern not found: $needle"
+    }
+}
+
+foreach ($needle in @("show_battle_targets", "show_battle_target_debuffs", "battle_target_max_entries", "battle_window_x", "battle_frame_width")) {
+    if (-not $configText.Contains($needle)) {
+        throw "Expected battle-target config key not found: $needle"
+    }
+}
+
 foreach ($needle in @("PARTY_SELECTION.handle_command", "PARTY_SELECTION.matches(unit)", "party_selection_border", "'/ashitaui'")) {
     if (-not $lua.Contains($needle)) {
         throw "Expected passive party-selection highlight pattern not found: $needle"

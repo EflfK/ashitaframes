@@ -11,6 +11,10 @@ clean while important unit information remains visible elsewhere on screen.
 
 - Draws a draggable target frame with name, HP percent, distance when
   available, and observed check difficulty/level in the top-right label slot.
+- Draws a separate draggable Battle Targets window for enemies claimed by or
+  acting against the party. Each AshitaFrames-styled row shows HP, optional
+  observed cast progress, observed debuff icons, and a highlight for the
+  current target; the current target is sorted first.
 - Integrates the installed MobDB zone database directly into monster target
   frames without requiring the MobDB addon itself to be loaded.
 - Presents MobDB information as a compact three-row field card inside the target
@@ -143,13 +147,18 @@ Open the in-game configuration window:
 /ashitaframes config
 ```
 
-The configuration window is organized into General, Self, Party, Pet, and
-Target tabs. The Self, Party, Pet, and Target tabs each include that frame's
+The configuration window is organized into General, Self, Party, Pet, Target,
+and Battle tabs. The Self, Party, Pet, Target, and Battle tabs each include that frame's
 persisted on/off toggle (`show_self`, `show_party`, `show_pet`, or
-`show_target`) plus its layout controls. The Party tab includes Protect/Shell
+`show_target`; the Battle toggle is `show_battle_targets`) plus its layout
+controls. The Party tab includes Protect/Shell
 reminders. The Target tab includes Dia, Paralyze, and Slow reminders plus the
 MobDB integration toggle. AshitaFrames reads MobDB's installed zone data and
 icons; `/addon load mobdb` is not required.
+The Battle tab controls the maximum tracked enemies, observed debuff icons,
+layout, opacity, HP/cast bars, and text thresholds. While configuration is
+open, it renders a two-enemy preview so the Battle Targets window can be
+positioned and styled outside combat.
 Use Save to write the current window layout and reminder settings to
 `Ashita/config/addons/ashitaframes/ashitaframes_config.lua`. If an older
 `Ashita/addons/ashitaframes/ashitaframes_config.lua` exists and the normal
@@ -188,6 +197,7 @@ return {
         locked = false,
         show_self = true,
         show_target = true,
+        show_battle_targets = true,
         show_party = true,
         show_pet = true,
         show_alliance = false,
@@ -203,12 +213,14 @@ return {
         show_target_debuffs = true,
         show_target_debuff_reminders = true,
         show_target_mobdb = true,
+        show_battle_target_debuffs = true,
         hide_buff_reminders_in_towns = true,
         buff_reminder_suppressed_zone_ids = { },
         signet_reminder_enabled = true,
         signet_warning_minutes = 30,
         max_buffs = 8,
         party_preview_size = 6,
+        battle_target_max_entries = 8,
         mp_text_threshold = 1,
         tp_text_threshold = 1000,
         cast_text_threshold = 1,
@@ -220,6 +232,8 @@ return {
         pet_window_y = 230,
         target_window_x = 36,
         target_window_y = 296,
+        battle_window_x = 285,
+        battle_window_y = 296,
         frame_width = 232,
         height = 56,
         row_height = 56,
@@ -297,6 +311,21 @@ return {
         target_mp_text_threshold = 1,
         target_tp_text_threshold = 1000,
         target_cast_text_threshold = 1,
+        battle_frame_width = 232,
+        battle_height = 56,
+        battle_row_height = 56,
+        battle_row_gap = 5,
+        battle_opacity = 88,
+        battle_hp_bar_height = 38,
+        battle_mp_bar_height = 18,
+        battle_tp_bar_height = 18,
+        battle_cast_bar_height = 18,
+        battle_show_mp = false,
+        battle_show_tp = false,
+        battle_show_cast = true,
+        battle_mp_text_threshold = 1,
+        battle_tp_text_threshold = 1000,
+        battle_cast_text_threshold = 1,
 
         buff_reminders = {
             default = {

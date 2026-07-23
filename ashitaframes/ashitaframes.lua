@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.6.0';
+addon.version   = '0.7.0';
 addon.desc      = 'Read-only party and target unit frames for Ashita.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -55,6 +55,7 @@ local DEFAULT_SETTINGS = {
     locked = false,
     show_self = true,
     show_target = true,
+    show_battle_targets = true,
     show_party = true,
     show_pet = true,
     show_alliance = false,
@@ -70,12 +71,14 @@ local DEFAULT_SETTINGS = {
     show_target_debuffs = true,
     show_target_debuff_reminders = true,
     show_target_mobdb = true,
+    show_battle_target_debuffs = true,
     hide_buff_reminders_in_towns = true,
     buff_reminder_suppressed_zone_ids = { },
     signet_reminder_enabled = true,
     signet_warning_minutes = 30,
     max_buffs = 8,
     party_preview_size = 6,
+    battle_target_max_entries = 8,
     mp_text_threshold = 1,
     tp_text_threshold = 1000,
     cast_text_threshold = 1,
@@ -87,6 +90,8 @@ local DEFAULT_SETTINGS = {
     pet_window_y = 230,
     target_window_x = 36,
     target_window_y = 296,
+    battle_window_x = 285,
+    battle_window_y = 296,
     frame_width = 232,
     height = -1,
     row_height = 56,
@@ -157,6 +162,21 @@ local DEFAULT_SETTINGS = {
     target_mp_text_threshold = -1,
     target_tp_text_threshold = -1,
     target_cast_text_threshold = -1,
+    battle_frame_width = -1,
+    battle_height = -1,
+    battle_row_height = -1,
+    battle_row_gap = -1,
+    battle_opacity = -1,
+    battle_hp_bar_height = -1,
+    battle_mp_bar_height = -1,
+    battle_tp_bar_height = -1,
+    battle_cast_bar_height = -1,
+    battle_show_mp = false,
+    battle_show_tp = false,
+    battle_show_cast = 'default',
+    battle_mp_text_threshold = -1,
+    battle_tp_text_threshold = -1,
+    battle_cast_text_threshold = -1,
     buff_reminders = {
         default = {
             enabled = true,
@@ -367,6 +387,8 @@ local LIMITS = {
     bar_height_max = 64,
     max_buffs_min = 1,
     max_buffs_max = 16,
+    battle_target_max_entries_min = 1,
+    battle_target_max_entries_max = 16,
     signet_warning_minutes_min = 1,
     signet_warning_minutes_max = 240,
     mp_text_threshold_min = 0,
@@ -421,6 +443,10 @@ local state = {
     pet_window_y = 230,
     target_window_x = 36,
     target_window_y = 296,
+    battle_window_x = 285,
+    battle_window_y = 296,
+    battle_targets = { },
+    battle_target_last_scan = 0,
     party_selection = nil,
 };
 
@@ -1205,6 +1231,7 @@ local function normalize_settings(settings)
     settings.locked = settings.locked == true;
     settings.show_self = settings.show_self ~= false;
     settings.show_target = settings.show_target ~= false;
+    settings.show_battle_targets = settings.show_battle_targets ~= false;
     settings.show_party = settings.show_party ~= false;
     settings.show_pet = settings.show_pet ~= false;
     settings.show_alliance = settings.show_alliance == true;
@@ -1220,6 +1247,7 @@ local function normalize_settings(settings)
     settings.show_target_debuffs = settings.show_target_debuffs ~= false;
     settings.show_target_debuff_reminders = settings.show_target_debuff_reminders ~= false;
     settings.show_target_mobdb = settings.show_target_mobdb ~= false;
+    settings.show_battle_target_debuffs = settings.show_battle_target_debuffs ~= false;
     settings.hide_buff_reminders_in_towns = settings.hide_buff_reminders_in_towns ~= false;
     settings.signet_reminder_enabled = settings.signet_reminder_enabled ~= false;
 
@@ -1231,6 +1259,8 @@ local function normalize_settings(settings)
     settings.pet_window_y = clamp_int(settings.pet_window_y, -2000, 4000);
     settings.target_window_x = clamp_int(settings.target_window_x, -2000, 4000);
     settings.target_window_y = clamp_int(settings.target_window_y, -2000, 4000);
+    settings.battle_window_x = clamp_int(settings.battle_window_x, -2000, 4000);
+    settings.battle_window_y = clamp_int(settings.battle_window_y, -2000, 4000);
     settings.frame_width = clamp_int(settings.frame_width, LIMITS.width_min, LIMITS.width_max);
     settings.row_height = normalize_frame_row_height(settings.height or settings.row_height, settings.row_height);
     settings.height = settings.row_height;
@@ -1240,6 +1270,7 @@ local function normalize_settings(settings)
     settings.tp_bar_height = normalize_resource_bar_height(settings.tp_bar_height, DEFAULT_SETTINGS.tp_bar_height);
     settings.cast_bar_height = normalize_resource_bar_height(settings.cast_bar_height, DEFAULT_SETTINGS.cast_bar_height);
     settings.max_buffs = clamp_int(settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
+    settings.battle_target_max_entries = clamp_int(settings.battle_target_max_entries, LIMITS.battle_target_max_entries_min, LIMITS.battle_target_max_entries_max);
     settings.signet_warning_minutes = clamp_int(settings.signet_warning_minutes, LIMITS.signet_warning_minutes_min, LIMITS.signet_warning_minutes_max);
     settings.party_preview_size = party_size(settings.party_preview_size);
     settings.mp_text_threshold = normalize_mp_text_threshold(settings.mp_text_threshold, 1);
@@ -1307,6 +1338,21 @@ local function normalize_settings(settings)
     settings.target_mp_text_threshold = normalize_mp_text_threshold(settings.target_mp_text_threshold, settings.mp_text_threshold);
     settings.target_tp_text_threshold = normalize_tp_text_threshold(settings.target_tp_text_threshold, settings.tp_text_threshold);
     settings.target_cast_text_threshold = normalize_cast_text_threshold(settings.target_cast_text_threshold, settings.cast_text_threshold);
+    settings.battle_frame_width = normalize_frame_width(settings.battle_frame_width, settings.frame_width);
+    settings.battle_row_height = normalize_frame_row_height(settings.battle_height or settings.battle_row_height, settings.row_height);
+    settings.battle_height = settings.battle_row_height;
+    settings.battle_row_gap = normalize_frame_row_gap(settings.battle_row_gap, settings.row_gap);
+    settings.battle_opacity = normalize_frame_opacity(settings.battle_opacity, settings.opacity);
+    settings.battle_hp_bar_height = normalize_resource_bar_height(settings.battle_hp_bar_height, settings.hp_bar_height);
+    settings.battle_mp_bar_height = normalize_resource_bar_height(settings.battle_mp_bar_height, settings.mp_bar_height);
+    settings.battle_tp_bar_height = normalize_resource_bar_height(settings.battle_tp_bar_height, settings.tp_bar_height);
+    settings.battle_cast_bar_height = normalize_resource_bar_height(settings.battle_cast_bar_height, settings.cast_bar_height);
+    settings.battle_show_mp = normalize_frame_bar_enabled(settings.battle_show_mp, false);
+    settings.battle_show_tp = normalize_frame_bar_enabled(settings.battle_show_tp, false);
+    settings.battle_show_cast = normalize_frame_bar_enabled(settings.battle_show_cast, settings.show_cast);
+    settings.battle_mp_text_threshold = normalize_mp_text_threshold(settings.battle_mp_text_threshold, settings.mp_text_threshold);
+    settings.battle_tp_text_threshold = normalize_tp_text_threshold(settings.battle_tp_text_threshold, settings.tp_text_threshold);
+    settings.battle_cast_text_threshold = normalize_cast_text_threshold(settings.battle_cast_text_threshold, settings.cast_text_threshold);
     settings.buff_reminders = normalize_buff_reminders(settings.buff_reminders);
     settings.target_debuff_reminders = normalize_target_debuff_reminders(settings.target_debuff_reminders);
     settings.buff_reminder_suppressed_zone_ids = normalize_zone_id_list(settings.buff_reminder_suppressed_zone_ids);
@@ -1350,6 +1396,10 @@ local function load_config()
     state.pet_window_y = state.settings.pet_window_y;
     state.target_window_x = state.settings.target_window_x;
     state.target_window_y = state.settings.target_window_y;
+    state.battle_window_x = state.settings.battle_window_x;
+    state.battle_window_y = state.settings.battle_window_y;
+    state.battle_targets = { };
+    state.battle_target_last_scan = 0;
 end
 
 local function log_info(message)
@@ -2764,7 +2814,7 @@ local function target_debuff_has_monster_spawn_flag(spawn_flags)
 end
 
 local function target_debuff_target_eligible(unit)
-    if (unit == nil or unit.kind ~= 'target' or unit.target_type ~= 2 or target_debuff_suppressed_name(unit.name)) then
+    if (unit == nil or (unit.kind ~= 'target' and unit.kind ~= 'battle_target') or unit.target_type ~= 2 or target_debuff_suppressed_name(unit.name)) then
         return false;
     end
 
@@ -2776,7 +2826,7 @@ local function target_debuff_target_eligible(unit)
 end
 
 local function target_debuff_reminder_keys(unit)
-    if (not state.settings.show_target_debuff_reminders or not target_debuff_target_eligible(unit) or tonumber(unit.server_id) == nil or tonumber(unit.server_id) == 0) then
+    if (unit == nil or unit.kind ~= 'target' or not state.settings.show_target_debuff_reminders or not target_debuff_target_eligible(unit) or tonumber(unit.server_id) == nil or tonumber(unit.server_id) == 0) then
         return { };
     end
 
@@ -2866,7 +2916,7 @@ end
 
 function target_buff_icon_items(unit)
     local items = { };
-    if (not state.settings.show_buffs or unit.kind ~= 'target' or type(unit.buffs) ~= 'table') then
+    if (not state.settings.show_buffs or (unit.kind ~= 'target' and unit.kind ~= 'battle_target') or type(unit.buffs) ~= 'table') then
         return items;
     end
 
@@ -2896,7 +2946,8 @@ end
 
 local function target_debuff_icon_items(unit)
     local items = { };
-    if (not state.settings.show_target_debuffs or type(unit.debuffs) ~= 'table') then
+    local enabled = unit ~= nil and ((unit.kind == 'battle_target' and state.settings.show_battle_target_debuffs) or (unit.kind == 'target' and state.settings.show_target_debuffs));
+    if (not enabled or type(unit.debuffs) ~= 'table') then
         return items;
     end
 
@@ -3242,6 +3293,8 @@ local function capture_runtime_settings_for_save()
     state.settings.pet_window_y = state.pet_window_y;
     state.settings.target_window_x = state.target_window_x;
     state.settings.target_window_y = state.target_window_y;
+    state.settings.battle_window_x = state.battle_window_x;
+    state.settings.battle_window_y = state.battle_window_y;
     state.settings.party_size_layouts = normalize_party_size_layouts(state.settings.party_size_layouts, state.settings);
     state.settings.buff_reminders = normalize_buff_reminders(state.settings.buff_reminders);
     state.settings.target_debuff_reminders = normalize_target_debuff_reminders(state.settings.target_debuff_reminders);
@@ -3261,6 +3314,7 @@ local function config_text_from_settings(settings)
         '',
         ('        show_self = %s,'):fmt(bool_text(settings.show_self)),
         ('        show_target = %s,'):fmt(bool_text(settings.show_target)),
+        ('        show_battle_targets = %s,'):fmt(bool_text(settings.show_battle_targets)),
         ('        show_party = %s,'):fmt(bool_text(settings.show_party)),
         ('        show_pet = %s,'):fmt(bool_text(settings.show_pet)),
         ('        show_alliance = %s,'):fmt(bool_text(settings.show_alliance)),
@@ -3277,12 +3331,14 @@ local function config_text_from_settings(settings)
         ('        show_target_debuffs = %s,'):fmt(bool_text(settings.show_target_debuffs)),
         ('        show_target_debuff_reminders = %s,'):fmt(bool_text(settings.show_target_debuff_reminders)),
         ('        show_target_mobdb = %s,'):fmt(bool_text(settings.show_target_mobdb)),
+        ('        show_battle_target_debuffs = %s,'):fmt(bool_text(settings.show_battle_target_debuffs)),
         ('        hide_buff_reminders_in_towns = %s,'):fmt(bool_text(settings.hide_buff_reminders_in_towns)),
         ('        buff_reminder_suppressed_zone_ids = %s,'):fmt(zone_id_list_text(settings.buff_reminder_suppressed_zone_ids)),
         ('        signet_reminder_enabled = %s,'):fmt(bool_text(settings.signet_reminder_enabled)),
         ('        signet_warning_minutes = %d,'):fmt(settings.signet_warning_minutes),
         ('        max_buffs = %d,'):fmt(settings.max_buffs),
         ('        party_preview_size = %d,'):fmt(settings.party_preview_size),
+        ('        battle_target_max_entries = %d,'):fmt(settings.battle_target_max_entries),
         ('        mp_text_threshold = %d,'):fmt(settings.mp_text_threshold),
         ('        tp_text_threshold = %d,'):fmt(settings.tp_text_threshold),
         ('        cast_text_threshold = %d,'):fmt(settings.cast_text_threshold),
@@ -3295,6 +3351,8 @@ local function config_text_from_settings(settings)
         ('        pet_window_y = %d,'):fmt(state.pet_window_y),
         ('        target_window_x = %d,'):fmt(state.target_window_x),
         ('        target_window_y = %d,'):fmt(state.target_window_y),
+        ('        battle_window_x = %d,'):fmt(state.battle_window_x),
+        ('        battle_window_y = %d,'):fmt(state.battle_window_y),
         '',
         ('        frame_width = %d,'):fmt(settings.frame_width),
         ('        height = %d,'):fmt(settings.height),
@@ -3377,6 +3435,21 @@ local function config_text_from_settings(settings)
         ('        target_mp_text_threshold = %d,'):fmt(settings.target_mp_text_threshold),
         ('        target_tp_text_threshold = %d,'):fmt(settings.target_tp_text_threshold),
         ('        target_cast_text_threshold = %d,'):fmt(settings.target_cast_text_threshold),
+        ('        battle_frame_width = %d,'):fmt(settings.battle_frame_width),
+        ('        battle_height = %d,'):fmt(settings.battle_height),
+        ('        battle_row_height = %d,'):fmt(settings.battle_row_height),
+        ('        battle_row_gap = %d,'):fmt(settings.battle_row_gap),
+        ('        battle_opacity = %d,'):fmt(settings.battle_opacity),
+        ('        battle_hp_bar_height = %d,'):fmt(settings.battle_hp_bar_height),
+        ('        battle_mp_bar_height = %d,'):fmt(settings.battle_mp_bar_height),
+        ('        battle_tp_bar_height = %d,'):fmt(settings.battle_tp_bar_height),
+        ('        battle_cast_bar_height = %d,'):fmt(settings.battle_cast_bar_height),
+        ('        battle_show_mp = %s,'):fmt(bool_text(settings.battle_show_mp)),
+        ('        battle_show_tp = %s,'):fmt(bool_text(settings.battle_show_tp)),
+        ('        battle_show_cast = %s,'):fmt(bool_text(settings.battle_show_cast)),
+        ('        battle_mp_text_threshold = %d,'):fmt(settings.battle_mp_text_threshold),
+        ('        battle_tp_text_threshold = %d,'):fmt(settings.battle_tp_text_threshold),
+        ('        battle_cast_text_threshold = %d,'):fmt(settings.battle_cast_text_threshold),
         '',
         '        buff_reminders = {',
     };
@@ -4023,6 +4096,180 @@ local function collect_target_unit()
     };
 end
 
+function battle_target_party_ids(party)
+    local result = { };
+    if (party == nil) then
+        return result;
+    end
+
+    for index = 0, 17, 1 do
+        if (truthy(safe_read(function () return party:GetMemberIsActive(index); end, false))) then
+            local server_id = tonumber(safe_read(function () return party:GetMemberServerId(index); end, 0)) or 0;
+            if (server_id ~= 0) then
+                result[server_id] = true;
+                result[bit.band(server_id, 0xFFFF)] = true;
+            end
+        end
+    end
+
+    return result;
+end
+
+function battle_target_entity_valid(entity, index)
+    index = tonumber(index);
+    if (entity == nil or index == nil or index <= 0) then
+        return false;
+    end
+
+    local render_flags = tonumber(safe_read(function () return entity:GetRenderFlags0(index); end, 0)) or 0;
+    if (bit.band(render_flags, 0x200) ~= 0x200 or bit.band(render_flags, 0x4000) ~= 0) then
+        return false;
+    end
+
+    local hp_pct = tonumber(safe_read(function () return entity:GetHPPercent(index); end, 0)) or 0;
+    local target_type = tonumber(safe_read(function () return entity:GetType(index); end, 0)) or 0;
+    local spawn_flags = tonumber(safe_read(function () return entity:GetSpawnFlags(index); end, 0)) or 0;
+    return hp_pct > 0
+        and target_type == 2
+        and target_debuff_has_monster_spawn_flag(spawn_flags)
+        and #clean_string(safe_read(function () return entity:GetName(index); end, '')) > 0;
+end
+
+function battle_target_remember(index, server_id)
+    index = tonumber(index);
+    server_id = tonumber(server_id);
+    if (index == nil or index <= 0 or server_id == nil or server_id == 0) then
+        return false;
+    end
+
+    local existing = state.battle_targets[index];
+    state.battle_targets[index] = {
+        index = index,
+        server_id = server_id,
+        seen_at = type(existing) == 'table' and existing.seen_at or os.clock(),
+    };
+    return true;
+end
+
+function battle_target_index_by_server_id(entity, server_id)
+    server_id = tonumber(server_id);
+    if (entity == nil or server_id == nil or server_id == 0) then
+        return nil;
+    end
+
+    for index, entry in pairs(state.battle_targets) do
+        if (type(entry) == 'table' and tonumber(entry.server_id) == server_id) then
+            return tonumber(index);
+        end
+    end
+
+    local scan_max = math.min(tonumber(safe_read(function () return entity:GetEntityMapSize(); end, 0x8FF)) or 0x8FF, 0x8FF);
+    for index = 1, scan_max, 1 do
+        if (tonumber(safe_read(function () return entity:GetServerId(index); end, 0)) == server_id) then
+            return index;
+        end
+    end
+
+    return nil;
+end
+
+function scan_claimed_battle_targets(memory, force)
+    local now = os.clock();
+    if (force ~= true and (now - (tonumber(state.battle_target_last_scan) or 0)) < 1.0) then
+        return;
+    end
+    state.battle_target_last_scan = now;
+
+    local entity = memory ~= nil and safe_read(function () return memory:GetEntity(); end, nil) or nil;
+    local party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
+    if (entity == nil or party == nil) then
+        return;
+    end
+
+    local party_ids = battle_target_party_ids(party);
+    local scan_max = math.min(tonumber(safe_read(function () return entity:GetEntityMapSize(); end, 0x8FF)) or 0x8FF, 0x8FF);
+    for index = 1, scan_max, 1 do
+        if (battle_target_entity_valid(entity, index)) then
+            local claim_status = tonumber(safe_read(function () return entity:GetClaimStatus(index); end, 0)) or 0;
+            local claim_id = bit.band(claim_status, 0xFFFF);
+            if (claim_id ~= 0 and party_ids[claim_id] == true) then
+                battle_target_remember(index, safe_read(function () return entity:GetServerId(index); end, 0));
+            end
+        end
+    end
+end
+
+function collect_battle_target_units()
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    local entity = memory ~= nil and safe_read(function () return memory:GetEntity(); end, nil) or nil;
+    if (memory == nil or entity == nil) then
+        return { };
+    end
+
+    scan_claimed_battle_targets(memory, false);
+
+    local target = safe_read(function () return memory:GetTarget(); end, nil);
+    local primary_index = target ~= nil and tonumber(safe_read(function () return target:GetTargetIndex(0); end, 0)) or 0;
+    local sub_index = target ~= nil and tonumber(safe_read(function () return target:GetTargetIndex(1); end, 0)) or 0;
+    local selected_index = target ~= nil and truthy(safe_read(function () return target:GetIsSubTargetActive(); end, false)) and sub_index or primary_index;
+    local entries = { };
+
+    for index, entry in pairs(state.battle_targets) do
+        if (battle_target_entity_valid(entity, index)) then
+            entry.index = tonumber(index);
+            entry.server_id = tonumber(safe_read(function () return entity:GetServerId(index); end, entry.server_id)) or entry.server_id;
+            table.insert(entries, entry);
+        else
+            state.battle_targets[index] = nil;
+        end
+    end
+
+    table.sort(entries, function (left, right)
+        local left_selected = tonumber(left.index) == tonumber(selected_index);
+        local right_selected = tonumber(right.index) == tonumber(selected_index);
+        if (left_selected ~= right_selected) then
+            return left_selected;
+        end
+        if (left.seen_at ~= right.seen_at) then
+            return (tonumber(left.seen_at) or 0) < (tonumber(right.seen_at) or 0);
+        end
+        return (tonumber(left.index) or 0) < (tonumber(right.index) or 0);
+    end);
+
+    local units = { };
+    local max_entries = state.settings.battle_target_max_entries or DEFAULT_SETTINGS.battle_target_max_entries;
+    for _, entry in ipairs(entries) do
+        if (#units >= max_entries) then
+            break;
+        end
+
+        local index = entry.index;
+        local server_id = entry.server_id;
+        local name = clean_string(safe_read(function () return entity:GetName(index); end, ''));
+        local spawn_flags = safe_read(function () return entity:GetSpawnFlags(index); end, nil);
+        table.insert(units, {
+            kind = 'battle_target',
+            tag = '',
+            index = index,
+            server_id = server_id,
+            target_type = safe_read(function () return entity:GetType(index); end, nil),
+            spawn_flags = spawn_flags,
+            name = name,
+            hp_pct = safe_read(function () return entity:GetHPPercent(index); end, nil),
+            distance = entity_distance(entity, index),
+            reminder_job = current_player_job_key(),
+            cast = active_cast_for_unit(server_id, '', false),
+            buffs = { },
+            debuffs = observed_target_debuffs_for_unit(server_id, ''),
+            selected = tonumber(index) == tonumber(selected_index),
+            same_zone = true,
+            dim = false,
+        });
+    end
+
+    return units;
+end
+
 function collect_pet_unit()
     local player_entity = safe_read(function () return GetPlayerEntity(); end, nil);
     if (player_entity == nil) then
@@ -4577,11 +4824,15 @@ local function draw_buff_icon_rail(unit, x, y, row_height, alpha, items, missing
 end
 
 function target_buff_rail_visible(unit, items)
-    return state.settings.show_buffs and unit.kind == 'target' and type(items) == 'table' and #items > 0;
+    return state.settings.show_buffs
+        and (unit.kind == 'target' or unit.kind == 'battle_target')
+        and type(items) == 'table'
+        and #items > 0;
 end
 
 function target_debuff_rail_visible(unit, items)
-    return state.settings.show_target_debuffs and target_debuff_target_eligible(unit) and type(items) == 'table' and #items > 0;
+    local enabled = unit ~= nil and ((unit.kind == 'battle_target' and state.settings.show_battle_target_debuffs) or (unit.kind == 'target' and state.settings.show_target_debuffs));
+    return enabled and target_debuff_target_eligible(unit) and type(items) == 'table' and #items > 0;
 end
 
 function target_debuff_rail_width(unit, items, row_height)
@@ -4944,7 +5195,7 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
     local width = layout.width;
     local alpha = (layout.opacity / 100) * (unit.dim and 0.62 or 1.0);
     local row_bg = unit.dim and COLORS.row_dim or COLORS.row_bg;
-    local border = unit.kind == 'target' and COLORS.row_border_active or COLORS.row_border;
+    local border = (unit.kind == 'target' or unit.selected == true) and COLORS.row_border_active or COLORS.row_border;
     local buff_missing_items = { };
     local buff_items = { };
     local target_buff_items = { };
@@ -4958,7 +5209,7 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
         if (buff_rail_visible(unit, buff_items, buff_missing_items)) then
             buff_rail_width = BUFF_RAIL.width;
         end
-    elseif (unit.kind == 'target') then
+    elseif (unit.kind == 'target' or unit.kind == 'battle_target') then
         target_buff_items = target_buff_icon_items(unit);
         target_debuff_items = target_debuff_icon_items(unit);
         if (target_buff_rail_visible(unit, target_buff_items)) then
@@ -4995,7 +5246,9 @@ local function effective_row_height(unit, layout)
     if (unit.kind == 'party' and state.settings.show_buffs) then
         return math.max(row_height, LIMITS.party_row_height_with_buffs_min);
     end
-    if (unit.kind == 'target' and ((state.settings.show_buffs and type(unit.buffs) == 'table' and #unit.buffs > 0) or (state.settings.show_target_debuffs and target_debuff_target_eligible(unit)))) then
+    if (unit.kind == 'target'
+        and ((state.settings.show_buffs and type(unit.buffs) == 'table' and #unit.buffs > 0)
+            or (state.settings.show_target_debuffs and target_debuff_target_eligible(unit)))) then
         return math.max(row_height, LIMITS.target_row_height_with_debuffs_min);
     end
 
@@ -5118,6 +5371,69 @@ local function render_target()
         function (x, y)
             state.target_window_x = math.floor(x + 0.5);
             state.target_window_y = math.floor(y + 0.5);
+        end);
+end
+
+function battle_target_preview_units()
+    return {
+        {
+            kind = 'battle_target',
+            tag = '',
+            index = 1,
+            server_id = 0x01000001,
+            target_type = 2,
+            spawn_flags = TARGET_DEBUFF_MONSTER_SPAWN_FLAG,
+            name = 'Desert Beetle',
+            hp_pct = 92,
+            cast = nil,
+            buffs = { },
+            debuffs = { 4, 13 },
+            selected = true,
+            same_zone = true,
+            dim = false,
+        },
+        {
+            kind = 'battle_target',
+            tag = '',
+            index = 2,
+            server_id = 0x01000002,
+            target_type = 2,
+            spawn_flags = TARGET_DEBUFF_MONSTER_SPAWN_FLAG,
+            name = 'Desert Beetle',
+            hp_pct = 22,
+            cast = { label = 'Sand Veil', percent = 64, duration = 3.0, kind = 'ability' },
+            buffs = { },
+            debuffs = { 134 },
+            selected = false,
+            same_zone = true,
+            dim = false,
+        },
+    };
+end
+
+function render_battle_targets()
+    if (not state.settings.show_battle_targets) then
+        return;
+    end
+
+    local units = collect_battle_target_units();
+    if (#units == 0 and state.config_visible[1] == true) then
+        units = battle_target_preview_units();
+    end
+    if (#units == 0) then
+        return;
+    end
+
+    render_window(
+        'AshitaFrames Battle Targets###AshitaFramesBattleTargets',
+        state.visible,
+        state.battle_window_x,
+        state.battle_window_y,
+        frame_layout('battle'),
+        units,
+        function (x, y)
+            state.battle_window_x = math.floor(x + 0.5);
+            state.battle_window_y = math.floor(y + 0.5);
         end);
 end
 
@@ -5495,6 +5811,38 @@ function render_target_frame_config_tab()
     render_target_debuff_reminder_config();
 end
 
+function render_battle_target_config_tab()
+    local show_battle_targets = state.settings.show_battle_targets == true;
+    if (imgui.Checkbox('Show Battle Targets##ashitaframes_show_battle_targets', { show_battle_targets })) then
+        state.settings.show_battle_targets = not show_battle_targets;
+        mark_config_changed();
+    end
+
+    local show_debuffs = state.settings.show_battle_target_debuffs == true;
+    if (imgui.Checkbox('Observed Debuff Icons##ashitaframes_show_battle_target_debuffs', { show_debuffs })) then
+        state.settings.show_battle_target_debuffs = not show_debuffs;
+        mark_config_changed();
+    end
+
+    render_int_control(
+        'Max Targets',
+        'battle_target_max_entries',
+        state.settings.battle_target_max_entries,
+        LIMITS.battle_target_max_entries_min,
+        LIMITS.battle_target_max_entries_max,
+        function (value)
+            state.settings.battle_target_max_entries = clamp_int(value, LIMITS.battle_target_max_entries_min, LIMITS.battle_target_max_entries_max);
+            mark_config_changed();
+        end,
+        'targets');
+
+    imgui.TextColored(COLORS.text_muted, 'Shows enemies claimed by or acting against your party. The current target is highlighted and sorted first.');
+    imgui.Separator();
+    render_frame_layout_controls('battle', 'Battle Targets Frame');
+    imgui.Separator();
+    render_frame_bar_controls('battle', 'Battle Target Bars');
+end
+
 function render_frame_config_tabs()
     if (imgui.BeginTabBar('##ashitaframes_config_tabs', ImGuiTabBarFlags_NoCloseWithMiddleMouseButton)) then
         if (imgui.BeginTabItem('General##ashitaframes_config_general', nil)) then
@@ -5515,6 +5863,10 @@ function render_frame_config_tabs()
         end
         if (imgui.BeginTabItem('Target##ashitaframes_config_target', nil)) then
             render_target_frame_config_tab();
+            imgui.EndTabItem();
+        end
+        if (imgui.BeginTabItem('Battle##ashitaframes_config_battle', nil)) then
+            render_battle_target_config_tab();
             imgui.EndTabItem();
         end
 
@@ -5717,6 +6069,7 @@ local function render_config_window()
         imgui.Text(('Party %d pos: %d, %d'):fmt(party_size(state.settings.party_preview_size), party_layout.x, party_layout.y));
         imgui.Text(('Pet pos: %d, %d'):fmt(state.pet_window_x, state.pet_window_y));
         imgui.Text(('Target pos: %d, %d'):fmt(state.target_window_x, state.target_window_y));
+        imgui.Text(('Battle pos: %d, %d'):fmt(state.battle_window_x, state.battle_window_y));
 
         if (imgui.Button('Save##ashitaframes_config_save')) then
             local ok, message = save_config();
@@ -6175,6 +6528,69 @@ function action_first_target_id(action)
     return nil;
 end
 
+function handle_battle_target_action_packet(data)
+    local action = parse_action_packet(data);
+    if (action == nil) then
+        return;
+    end
+
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    local entity = memory ~= nil and safe_read(function () return memory:GetEntity(); end, nil) or nil;
+    local party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
+    if (entity == nil or party == nil) then
+        return;
+    end
+
+    local party_ids = battle_target_party_ids(party);
+    local actor_id = tonumber(action.actor_id);
+    local actor_is_party = party_ids[actor_id] == true;
+    local actor_index = not actor_is_party and battle_target_index_by_server_id(entity, actor_id) or nil;
+    local actor_hit_party = false;
+
+    for _, target in ipairs(action.targets or { }) do
+        local target_id = tonumber(target.id);
+        if (party_ids[target_id] == true) then
+            actor_hit_party = true;
+        end
+
+        if (actor_is_party and target_id ~= nil and target_id ~= 0) then
+            local target_index = battle_target_index_by_server_id(entity, target_id);
+            if (battle_target_entity_valid(entity, target_index)) then
+                battle_target_remember(target_index, target_id);
+            end
+        end
+    end
+
+    if (actor_hit_party and battle_target_entity_valid(entity, actor_index)) then
+        battle_target_remember(actor_index, actor_id);
+    end
+end
+
+function handle_battle_target_update_packet(data)
+    if (type(data) ~= 'string') then
+        return;
+    end
+
+    local update_flags = read_le_uint(data, 0x0B, 1);
+    if (update_flags == nil or bit.band(update_flags, 0x02) ~= 0x02) then
+        return;
+    end
+
+    local index = read_le_uint(data, 0x09, 2);
+    local claim_id = read_le_uint(data, 0x2D, 4);
+    local memory = safe_read(function () return AshitaCore:GetMemoryManager(); end, nil);
+    local entity = memory ~= nil and safe_read(function () return memory:GetEntity(); end, nil) or nil;
+    local party = memory ~= nil and safe_read(function () return memory:GetParty(); end, nil) or nil;
+    local party_ids = battle_target_party_ids(party);
+
+    if (battle_target_entity_valid(entity, index)
+        and claim_id ~= nil
+        and claim_id ~= 0
+        and (party_ids[claim_id] == true or party_ids[bit.band(claim_id, 0xFFFF)] == true)) then
+        battle_target_remember(index, safe_read(function () return entity:GetServerId(index); end, 0));
+    end
+end
+
 function handle_cast_action_packet(data)
     local action = parse_action_packet(data);
     if (action == nil) then
@@ -6259,13 +6675,18 @@ function handle_incoming_packet(e)
     end
 
     if (e.id == 0x028) then
+        handle_battle_target_action_packet(e.data_modified or e.data);
         handle_cast_action_packet(e.data_modified or e.data);
         handle_target_debuff_action_packet(e.data_modified or e.data);
+    elseif (e.id == 0x00E) then
+        handle_battle_target_update_packet(e.data_modified or e.data);
     elseif (e.id == 0x029) then
         handle_target_debuff_message_packet(e.data_modified or e.data);
     elseif (e.id == 0x00A) then
         clear_observed_target_debuffs();
         clear_active_casts();
+        state.battle_targets = { };
+        state.battle_target_last_scan = 0;
     end
 end
 
@@ -6973,6 +7394,7 @@ ashita.events.register('d3d_present', 'present_cb', function ()
     end
 
     render_target();
+    render_battle_targets();
     render_self();
     render_pet();
     render_party();
