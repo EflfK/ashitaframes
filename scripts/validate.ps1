@@ -92,6 +92,10 @@ foreach ($needle in @("PARTY_SELECTION.handle_command", "PARTY_SELECTION.matches
     }
 }
 
+if (-not $lua.Contains("draw_bar(draw_list, x, current_y, width, hp_h, unit.hp_pct, hp_color, alpha);")) {
+    throw "HP background fill must use the live unit HP percentage for every frame, including self."
+}
+
 foreach ($needle in @("signet_reminder_enabled", "signet_warning_minutes")) {
     if (-not $configText.Contains($needle)) {
         throw "Expected Signet reminder config key not found: $needle"

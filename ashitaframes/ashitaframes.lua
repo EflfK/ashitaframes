@@ -4692,7 +4692,6 @@ function draw_resource_bars(draw_list, unit, layout, x, y, width, height, alpha)
     if (unit.kind == 'target' and type(unit.mobdb) == 'table' and state.settings.show_target_mobdb) then
         hp_color = hp ~= nil and hp <= 35 and COLORS.hp_low or COLORS.mobdb_hp;
     end
-    local hp_background_percent = unit.category == 'self' and 100 or unit.hp_pct;
     local hp_h = effective_resource_bar_height(layout.hp_bar_height);
     local mp_h = layout.show_mp == true and unit_has_mp(unit) and effective_resource_bar_height(layout.mp_bar_height) or 0;
     local tp_h = layout.show_tp == true and unit_has_tp(unit) and effective_resource_bar_height(layout.tp_bar_height) or 0;
@@ -4704,7 +4703,7 @@ function draw_resource_bars(draw_list, unit, layout, x, y, width, height, alpha)
         hp_h = hp_h + (height - total_h);
     end
 
-    draw_bar(draw_list, x, current_y, width, hp_h, hp_background_percent, hp_color, alpha);
+    draw_bar(draw_list, x, current_y, width, hp_h, unit.hp_pct, hp_color, alpha);
     draw_hp_bar_text(draw_list, unit, x, current_y, width, hp_h, alpha);
     current_y = current_y + hp_h;
 
