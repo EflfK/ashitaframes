@@ -122,6 +122,20 @@ foreach ($needle in @("TARGET_DEBUFF_EFFECT_OVERRIDES", "target_debuff_status_id
     }
 }
 
+$targetDebuffApplyBlock = [regex]::Match(
+    $lua,
+    'local TARGET_DEBUFF_APPLY_MESSAGES = \{(?<body>.*?)\};\s*local TARGET_DEBUFF_OFF_MESSAGES',
+    [System.Text.RegularExpressions.RegexOptions]::Singleline).Groups['body'].Value
+if ([string]::IsNullOrWhiteSpace($targetDebuffApplyBlock)) {
+    throw "Expected target-debuff application message table not found."
+}
+
+foreach ($messageId in @(2, 127, 160, 164, 166, 186, 194, 203, 205, 230, 236, 237, 252, 264, 265, 266, 267, 268, 269, 271, 272, 277, 278, 279, 280, 319, 320, 327, 375, 412, 519, 520, 645, 754, 755, 804)) {
+    if (-not $targetDebuffApplyBlock.Contains(("[{0}] = true" -f $messageId))) {
+        throw "Expected target-debuff application message id not found: $messageId"
+    }
+}
+
 foreach ($needle in @(
     "show_battle_targets",
     "collect_battle_target_units",

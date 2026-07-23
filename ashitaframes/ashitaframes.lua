@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.8.0';
+addon.version   = '0.8.1';
 addon.desc      = 'Party and target unit frames for Ashita with attended self-buff cancellation.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -6281,16 +6281,46 @@ function print_status()
 end
 
 local TARGET_DEBUFF_APPLY_MESSAGES = {
+    -- Damaging spells that also apply a status effect.
     [2] = true,
+    [252] = true,
+    [264] = true,
+    [265] = true,
+
+    -- Abilities, weapon skills, spells, and additional effects that report
+    -- the applied status id in the target-action parameter.
     [127] = true,
+    [160] = true,
+    [164] = true,
+    [166] = true,
+    [186] = true,
+    [194] = true,
+    [203] = true,
+    [205] = true,
+    [230] = true,
     [236] = true,
     [237] = true,
-    [252] = true,
+    [266] = true,
+    [267] = true,
     [268] = true,
+    [269] = true,
     [271] = true,
+    [272] = true,
+    [277] = true,
+    [278] = true,
+    [279] = true,
+    [280] = true,
+    [319] = true,
+    [320] = true,
     [327] = true,
+    [375] = true,
+    [412] = true,
     [519] = true,
     [520] = true,
+    [645] = true,
+    [754] = true,
+    [755] = true,
+    [804] = true,
 };
 local TARGET_DEBUFF_OFF_MESSAGES = {
     [64] = true,
