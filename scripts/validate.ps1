@@ -70,7 +70,8 @@ foreach ($needle in @(
 
 foreach ($needle in @(
     "monster_ability_cast_info_by_id",
-    "duration = 3.0",
+    "duration = 6.0",
+    "return observed_target_name_key(name)",
     "action_type == 7",
     "action_type ~= 7",
     "text:match('^(.-) readies (.-)%.$')",

@@ -42,10 +42,10 @@ clean while important unit information remains visible elsewhere on screen.
 - Shows configurable cast bars on self, party, pet, target, and battle-target
   frames. The local player uses Ashita cast-bar memory; other units use
   observed cast starts with resource cast-time estimates. Enemy TP moves such
-  as `Explosion` use the packet/log "readies" event and a three-second estimated
-  bar because FFXI does not send a per-move ready duration. Cast labels show the
-  resolved spell, item, or TP-move name and append the observed target when
-  available.
+  as `Self-Destruct` use the packet/log "readies" event and a six-second fallback
+  bar that clears as soon as the move completes, because FFXI does not send a
+  per-move ready duration. Cast labels show the resolved spell, item, or TP-move
+  name and append the observed target when available.
 - Shows compact party status icons for every buff and debuff reported by Ashita
   status memory, plus observed party effect messages for trusts. Status icons
   use the game's native artwork and draw in a reserved left rail so

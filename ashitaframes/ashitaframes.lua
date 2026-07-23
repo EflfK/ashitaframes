@@ -3553,7 +3553,7 @@ local function save_config()
 end
 
 function cast_name_key(name)
-    return observed_name_key(name);
+    return observed_target_name_key(name);
 end
 
 function entity_name_by_server_id(server_id)
@@ -3737,7 +3737,7 @@ function monster_ability_cast_info_by_id(ability_id)
         id = cast_resource_id(ability) or ability_id,
         kind = 'mob_ability',
         label = label,
-        duration = 3.0,
+        duration = 6.0,
     };
 end
 
@@ -7248,7 +7248,7 @@ function process_observed_cast_text(message)
 
     local actor, ability = text:match('^(.-) readies (.-)%.$');
     if (actor ~= nil and ability ~= nil) then
-        return set_active_cast(nil, actor, ability, 3.0, 'mob_ability', nil);
+        return set_active_cast(nil, actor, ability, 6.0, 'mob_ability', nil);
     end
 
     actor, ability = text:match('^(.-) uses (.-)%.$');
