@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.8.1';
+addon.version   = '0.8.2';
 addon.desc      = 'Party and target unit frames for Ashita with attended self-buff cancellation.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -6811,18 +6811,27 @@ function handle_target_debuff_message_packet(data)
 end
 
 function handle_incoming_packet(e)
-    if (e == nil or e.blocked == true) then
+    if (e == nil) then
+        return;
+    end
+
+    -- Combat-log addons such as SimpleLog can rewrite and block incoming
+    -- packets after rendering replacement chat text. AshitaFrames is a
+    -- passive observer, so read the untouched server payload without changing
+    -- the packet's blocked state or modified data.
+    local packet_data = e.data or e.data_modified;
+    if (packet_data == nil) then
         return;
     end
 
     if (e.id == 0x028) then
-        handle_battle_target_action_packet(e.data_modified or e.data);
-        handle_cast_action_packet(e.data_modified or e.data);
-        handle_target_debuff_action_packet(e.data_modified or e.data);
+        handle_battle_target_action_packet(packet_data);
+        handle_cast_action_packet(packet_data);
+        handle_target_debuff_action_packet(packet_data);
     elseif (e.id == 0x00E) then
-        handle_battle_target_update_packet(e.data_modified or e.data);
+        handle_battle_target_update_packet(packet_data);
     elseif (e.id == 0x029) then
-        handle_target_debuff_message_packet(e.data_modified or e.data);
+        handle_target_debuff_message_packet(packet_data);
     elseif (e.id == 0x00A) then
         clear_observed_target_debuffs();
         clear_active_casts();

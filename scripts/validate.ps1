@@ -137,6 +137,19 @@ foreach ($messageId in @(2, 127, 160, 164, 166, 186, 194, 203, 205, 230, 236, 23
 }
 
 foreach ($needle in @(
+    "local packet_data = e.data or e.data_modified",
+    "handle_target_debuff_action_packet(packet_data)",
+    "handle_target_debuff_message_packet(packet_data)"
+)) {
+    if (-not $lua.Contains($needle)) {
+        throw "Expected passive original-packet observation pattern not found: $needle"
+    }
+}
+if ($lua.Contains("if (e == nil or e.blocked == true)")) {
+    throw "Incoming packet observation must not discard packets blocked by combat-log addons."
+}
+
+foreach ($needle in @(
     "show_battle_targets",
     "collect_battle_target_units",
     "scan_claimed_battle_targets",

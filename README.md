@@ -391,6 +391,9 @@ applied by players, trusts, pets, or monsters are observed from incoming action
 and wear-off packets and shown with their native status icons. Because FFXI
 does not expose a complete target-status snapshot to the client, effects already
 active before AshitaFrames loads may not appear until they are applied again.
+AshitaFrames passively reads the original packet even when a combat-log addon
+such as SimpleLog blocks or rewrites it for display; AshitaFrames does not
+change the packet or its blocked state.
 Supported target
 debuff reminder keys are currently `dia`, `paralyze`, and `slow`; configured
 reminders only display on attackable targets when the spell is learned, usable
