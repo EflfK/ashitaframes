@@ -85,6 +85,11 @@ foreach ($needle in @(
     }
 }
 
+$targetCheckLookupPattern = "(?s)function observed_target_check_for_unit\(server_id, name\).*?if \(target_id ~= nil and target_id ~= 0\) then\s+local entry = checks\.by_id\[target_id\];.*?return nil;\s+end\s+local name_key"
+if (-not [regex]::IsMatch($lua, $targetCheckLookupPattern)) {
+    throw "Observed target checks must not fall back by name when a stable target id is available."
+}
+
 $outgoingPacketCalls = ([regex]::Matches($allLua, "AddOutgoingPacket")).Count
 if ($outgoingPacketCalls -ne 1) {
     throw "Expected exactly one narrowly scoped outgoing packet call; found $outgoingPacketCalls."

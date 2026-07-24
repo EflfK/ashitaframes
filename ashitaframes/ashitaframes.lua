@@ -2115,13 +2115,17 @@ function observed_target_check_for_unit(server_id, name)
 
     local checks = ensure_observed_target_checks();
     local target_id = tonumber(server_id);
-    local entry = target_id ~= nil and checks.by_id[target_id] or nil;
-    if (type(entry) == 'table') then
-        return entry;
+    if (target_id ~= nil and target_id ~= 0) then
+        local entry = checks.by_id[target_id];
+        if (type(entry) == 'table') then
+            return entry;
+        end
+
+        return nil;
     end
 
     local name_key = observed_target_name_key(name);
-    entry = name_key ~= nil and checks.by_name[name_key] or nil;
+    local entry = name_key ~= nil and checks.by_name[name_key] or nil;
     if (type(entry) == 'table') then
         return entry;
     end
