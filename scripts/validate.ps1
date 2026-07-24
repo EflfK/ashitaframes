@@ -122,6 +122,22 @@ foreach ($needle in @("TARGET_DEBUFF_EFFECT_OVERRIDES", "target_debuff_status_id
     }
 }
 
+foreach ($needle in @(
+    "buff_icon_size",
+    "debuff_icon_size",
+    "status_icon_rail_column_width",
+    "status_icon_rail_width",
+    "buff_status_icon_size()",
+    "debuff_status_icon_size()"
+)) {
+    if (-not $lua.Contains($needle)) {
+        throw "Expected configurable status-icon sizing pattern not found: $needle"
+    }
+    if (($needle -eq "buff_icon_size" -or $needle -eq "debuff_icon_size") -and -not $configText.Contains($needle)) {
+        throw "Expected configurable status-icon setting not found in default config: $needle"
+    }
+}
+
 $targetDebuffApplyBlock = [regex]::Match(
     $lua,
     'local TARGET_DEBUFF_APPLY_MESSAGES = \{(?<body>.*?)\};\s*local TARGET_DEBUFF_OFF_MESSAGES',

@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.8.3';
+addon.version   = '0.9.0';
 addon.desc      = 'Party and target unit frames for Ashita with attended self-buff cancellation.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -80,6 +80,8 @@ local DEFAULT_SETTINGS = {
     signet_reminder_enabled = true,
     signet_warning_minutes = 30,
     max_buffs = 8,
+    buff_icon_size = 22,
+    debuff_icon_size = 22,
     party_preview_size = 6,
     battle_target_max_entries = 8,
     mp_text_threshold = 1,
@@ -390,6 +392,8 @@ local LIMITS = {
     bar_height_max = 64,
     max_buffs_min = 1,
     max_buffs_max = 16,
+    status_icon_size_min = 12,
+    status_icon_size_max = 48,
     battle_target_max_entries_min = 1,
     battle_target_max_entries_max = 16,
     signet_warning_minutes_min = 1,
@@ -1273,6 +1277,8 @@ local function normalize_settings(settings)
     settings.tp_bar_height = normalize_resource_bar_height(settings.tp_bar_height, DEFAULT_SETTINGS.tp_bar_height);
     settings.cast_bar_height = normalize_resource_bar_height(settings.cast_bar_height, DEFAULT_SETTINGS.cast_bar_height);
     settings.max_buffs = clamp_int(settings.max_buffs, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
+    settings.buff_icon_size = clamp_int(settings.buff_icon_size, LIMITS.status_icon_size_min, LIMITS.status_icon_size_max);
+    settings.debuff_icon_size = clamp_int(settings.debuff_icon_size, LIMITS.status_icon_size_min, LIMITS.status_icon_size_max);
     settings.battle_target_max_entries = clamp_int(settings.battle_target_max_entries, LIMITS.battle_target_max_entries_min, LIMITS.battle_target_max_entries_max);
     settings.signet_warning_minutes = clamp_int(settings.signet_warning_minutes, LIMITS.signet_warning_minutes_min, LIMITS.signet_warning_minutes_max);
     settings.party_preview_size = party_size(settings.party_preview_size);
@@ -3389,6 +3395,8 @@ local function config_text_from_settings(settings)
         ('        signet_reminder_enabled = %s,'):fmt(bool_text(settings.signet_reminder_enabled)),
         ('        signet_warning_minutes = %d,'):fmt(settings.signet_warning_minutes),
         ('        max_buffs = %d,'):fmt(settings.max_buffs),
+        ('        buff_icon_size = %d,'):fmt(settings.buff_icon_size),
+        ('        debuff_icon_size = %d,'):fmt(settings.debuff_icon_size),
         ('        party_preview_size = %d,'):fmt(settings.party_preview_size),
         ('        battle_target_max_entries = %d,'):fmt(settings.battle_target_max_entries),
         ('        mp_text_threshold = %d,'):fmt(settings.mp_text_threshold),
@@ -4827,13 +4835,39 @@ local function draw_buff_missing_badge(draw_list, x, y, alpha, items)
     end
 end
 
-function status_icon_rail_slots_per_column(row_height, missing_count)
-    local badge_reserved = (tonumber(missing_count) or 0) > 0 and (BUFF_RAIL.badge_height + BUFF_RAIL.icon_gap) or 0;
-    local available_height = row_height - 16 - badge_reserved;
-    return math.max(1, math.floor((available_height + BUFF_RAIL.icon_gap) / (BUFF_RAIL.icon_size + BUFF_RAIL.icon_gap)));
+function buff_status_icon_size()
+    return clamp_int(state.settings.buff_icon_size, LIMITS.status_icon_size_min, LIMITS.status_icon_size_max);
 end
 
-function draw_status_icon_rail(unit, x, y, row_height, alpha, items, missing_items, align_right, rail_width)
+function debuff_status_icon_size()
+    return clamp_int(state.settings.debuff_icon_size, LIMITS.status_icon_size_min, LIMITS.status_icon_size_max);
+end
+
+function status_icon_rail_column_width(icon_size)
+    icon_size = clamp_int(icon_size, LIMITS.status_icon_size_min, LIMITS.status_icon_size_max);
+    local default_padding = BUFF_RAIL.width - BUFF_RAIL.icon_size;
+    return math.max(BUFF_RAIL.badge_width + 8, icon_size + default_padding);
+end
+
+function status_icon_rail_slots_per_column(row_height, missing_count, icon_size)
+    icon_size = clamp_int(icon_size, LIMITS.status_icon_size_min, LIMITS.status_icon_size_max);
+    local badge_reserved = (tonumber(missing_count) or 0) > 0 and (BUFF_RAIL.badge_height + BUFF_RAIL.icon_gap) or 0;
+    local available_height = row_height - 16 - badge_reserved;
+    return math.max(1, math.floor((available_height + BUFF_RAIL.icon_gap) / (icon_size + BUFF_RAIL.icon_gap)));
+end
+
+function status_icon_rail_width(items, row_height, missing_count, icon_size)
+    local item_count = type(items) == 'table' and #items or 0;
+    if (item_count <= 0) then
+        return 0;
+    end
+
+    local column_width = status_icon_rail_column_width(icon_size);
+    local slots_per_column = status_icon_rail_slots_per_column(row_height, missing_count, icon_size);
+    return math.max(1, math.ceil(item_count / slots_per_column)) * column_width;
+end
+
+function draw_status_icon_rail(unit, x, y, row_height, alpha, items, missing_items, align_right, icon_size, rail_width)
     items = items or { };
     missing_items = missing_items or { };
     if (#items == 0 and #missing_items == 0) then
@@ -4842,11 +4876,13 @@ function draw_status_icon_rail(unit, x, y, row_height, alpha, items, missing_ite
 
     local draw_list = imgui.GetWindowDrawList();
     local tint = unit.dim and { 0.62, 0.62, 0.62, 0.62 } or { 1.00, 1.00, 1.00, 1.00 };
-    rail_width = math.max(BUFF_RAIL.width, tonumber(rail_width) or BUFF_RAIL.width);
-    local columns = math.max(1, math.floor(rail_width / BUFF_RAIL.width));
-    local icon_x = x + math.floor((BUFF_RAIL.width - BUFF_RAIL.icon_size) / 2);
+    icon_size = clamp_int(icon_size, LIMITS.status_icon_size_min, LIMITS.status_icon_size_max);
+    local column_width = status_icon_rail_column_width(icon_size);
+    rail_width = math.max(column_width, tonumber(rail_width) or column_width);
+    local columns = math.max(1, math.floor(rail_width / column_width));
+    local icon_x = x + math.floor((column_width - icon_size) / 2);
     local icon_y = y + 8;
-    local slots_per_column = status_icon_rail_slots_per_column(row_height, #missing_items);
+    local slots_per_column = status_icon_rail_slots_per_column(row_height, #missing_items, icon_size);
     local max_slots = slots_per_column * columns;
     local slot_index = 0;
     local display_items = { };
@@ -4874,7 +4910,7 @@ function draw_status_icon_rail(unit, x, y, row_height, alpha, items, missing_ite
             break;
         end
 
-        draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint, BUFF_RAIL.icon_size);
+        draw_buff_icon_frame(draw_list, item, icon_x, icon_y, alpha, tint, icon_size);
         local item_hovered = imgui.IsItemHovered();
         local item_right_clicked = imgui.IsItemClicked(1);
         if (item_hovered) then
@@ -4887,15 +4923,15 @@ function draw_status_icon_rail(unit, x, y, row_height, alpha, items, missing_ite
         slot_index = slot_index + 1;
         local column = math.floor(slot_index / slots_per_column);
         local row = math.fmod(slot_index, slots_per_column);
-        icon_x = x + (column * BUFF_RAIL.width) + math.floor((BUFF_RAIL.width - BUFF_RAIL.icon_size) / 2);
-        icon_y = y + 8 + (row * (BUFF_RAIL.icon_size + BUFF_RAIL.icon_gap));
+        icon_x = x + (column * column_width) + math.floor((column_width - icon_size) / 2);
+        icon_y = y + 8 + (row * (icon_size + BUFF_RAIL.icon_gap));
         max_slots = max_slots - 1;
     end
 
     if (#missing_items > 0) then
         draw_buff_missing_badge(
             draw_list,
-            x + math.floor((BUFF_RAIL.width - BUFF_RAIL.badge_width) / 2),
+            x + math.floor((column_width - BUFF_RAIL.badge_width) / 2),
             y + row_height - BUFF_RAIL.badge_height - 7,
             alpha,
             missing_items);
@@ -4904,14 +4940,14 @@ function draw_status_icon_rail(unit, x, y, row_height, alpha, items, missing_ite
     imgui.SetCursorScreenPos({ x, y });
 end
 
-local function draw_buff_icon_rail(unit, x, y, row_height, alpha, items, missing_items)
+local function draw_buff_icon_rail(unit, x, y, row_height, alpha, items, missing_items, rail_width)
     items = items or buff_icon_items(unit);
     missing_items = missing_items or missing_buff_icon_items(unit);
     if (not buff_rail_visible(unit, items, missing_items)) then
         return;
     end
 
-    draw_status_icon_rail(unit, x, y, row_height, alpha, items, missing_items, false);
+    draw_status_icon_rail(unit, x, y, row_height, alpha, items, missing_items, false, buff_status_icon_size(), rail_width);
 end
 
 function target_buff_rail_visible(unit, items)
@@ -4931,17 +4967,16 @@ function target_debuff_rail_width(unit, items, row_height)
         return 0;
     end
 
-    local slots_per_column = status_icon_rail_slots_per_column(row_height, 0);
-    return math.max(1, math.ceil(#items / slots_per_column)) * BUFF_RAIL.width;
+    return status_icon_rail_width(items, row_height, 0, debuff_status_icon_size());
 end
 
-function draw_target_buff_icon_rail(unit, x, y, row_height, alpha, items)
+function draw_target_buff_icon_rail(unit, x, y, row_height, alpha, items, rail_width)
     items = items or target_buff_icon_items(unit);
     if (not target_buff_rail_visible(unit, items)) then
         return;
     end
 
-    draw_status_icon_rail(unit, x, y, row_height, alpha, items, { }, false);
+    draw_status_icon_rail(unit, x, y, row_height, alpha, items, { }, false, buff_status_icon_size(), rail_width);
 end
 
 function draw_target_debuff_icon_rail(unit, x, y, row_height, alpha, items, rail_width)
@@ -4950,7 +4985,7 @@ function draw_target_debuff_icon_rail(unit, x, y, row_height, alpha, items, rail
         return;
     end
 
-    draw_status_icon_rail(unit, x, y, row_height, alpha, items, { }, true, rail_width);
+    draw_status_icon_rail(unit, x, y, row_height, alpha, items, { }, true, debuff_status_icon_size(), rail_width);
 end
 
 function active_resource_bar_height(unit, layout)
@@ -5298,13 +5333,13 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
         buff_missing_items = missing_buff_icon_items(unit);
         buff_items = buff_icon_items(unit, buff_missing_items);
         if (buff_rail_visible(unit, buff_items, buff_missing_items)) then
-            buff_rail_width = BUFF_RAIL.width;
+            buff_rail_width = status_icon_rail_width(buff_items, row_height, #buff_missing_items, buff_status_icon_size());
         end
     elseif (unit.kind == 'target' or unit.kind == 'battle_target') then
         target_buff_items = target_buff_icon_items(unit);
         target_debuff_items = target_debuff_icon_items(unit);
         if (target_buff_rail_visible(unit, target_buff_items)) then
-            buff_rail_width = BUFF_RAIL.width;
+            buff_rail_width = status_icon_rail_width(target_buff_items, row_height, 0, buff_status_icon_size());
         end
         if (target_debuff_rail_visible(unit, target_debuff_items)) then
             debuff_rail_width = target_debuff_rail_width(unit, target_debuff_items, row_height);
@@ -5319,8 +5354,8 @@ local function draw_unit_row(unit, layout, row_height, skip_spacing)
         draw_list:AddRect({ x, y }, { x + width, y + row_height }, color_u32(apply_alpha(COLORS.party_selection_border, alpha)), 4.0, ImDrawCornerFlags_All, 2.5);
     end
 
-    draw_buff_icon_rail(unit, x, y, row_height, alpha, buff_items, buff_missing_items);
-    draw_target_buff_icon_rail(unit, x, y, row_height, alpha, target_buff_items);
+    draw_buff_icon_rail(unit, x, y, row_height, alpha, buff_items, buff_missing_items, buff_rail_width);
+    draw_target_buff_icon_rail(unit, x, y, row_height, alpha, target_buff_items, buff_rail_width);
     draw_target_debuff_icon_rail(unit, x + width - debuff_rail_width, y, row_height, alpha, target_debuff_items, debuff_rail_width);
     if (unit.kind == 'target') then
         draw_target_mobdb_overlay(unit, x, y, width, row_height, alpha, buff_rail_width, debuff_rail_width);
@@ -5764,6 +5799,16 @@ function render_general_config_tab()
         state.settings.max_buffs = clamp_int(value, LIMITS.max_buffs_min, LIMITS.max_buffs_max);
         mark_config_changed();
     end, 'buffs');
+
+    render_int_control('Buff Icon Size', 'buff_icon_size', state.settings.buff_icon_size, LIMITS.status_icon_size_min, LIMITS.status_icon_size_max, function (value)
+        state.settings.buff_icon_size = clamp_int(value, LIMITS.status_icon_size_min, LIMITS.status_icon_size_max);
+        mark_config_changed();
+    end, 'px');
+
+    render_int_control('Debuff Icon Size', 'debuff_icon_size', state.settings.debuff_icon_size, LIMITS.status_icon_size_min, LIMITS.status_icon_size_max, function (value)
+        state.settings.debuff_icon_size = clamp_int(value, LIMITS.status_icon_size_min, LIMITS.status_icon_size_max);
+        mark_config_changed();
+    end, 'px');
 end
 
 function render_signet_reminder_config()

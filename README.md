@@ -231,6 +231,8 @@ return {
         signet_reminder_enabled = true,
         signet_warning_minutes = 30,
         max_buffs = 8,
+        buff_icon_size = 22,
+        debuff_icon_size = 22,
         party_preview_size = 6,
         battle_target_max_entries = 8,
         mp_text_threshold = 1,
@@ -385,6 +387,11 @@ current main/sub job.
 `hide_buff_reminders_in_towns` hides missing-buff flashes in town and safe hub
 zones. Add zone ids to `buff_reminder_suppressed_zone_ids` to hide missing
 reminders in additional zones.
+
+`buff_icon_size` controls active and reminder buff icons on self, party, target,
+and battle-target frames. `debuff_icon_size` independently controls active and
+reminder debuff icons on target and battle-target frames. Both accept 12–48
+pixels, default to 22, and automatically resize and wrap their status rails.
 
 `target_debuff_reminders` is keyed by your current main job. Active debuffs
 applied by players, trusts, pets, or monsters are observed from incoming action

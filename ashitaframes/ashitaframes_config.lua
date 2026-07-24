@@ -28,6 +28,8 @@ return {
         signet_reminder_enabled = true,
         signet_warning_minutes = 30,
         max_buffs = 8,
+        buff_icon_size = 22,
+        debuff_icon_size = 22,
         party_preview_size = 6,
         battle_target_max_entries = 8,
         mp_text_threshold = 1,
