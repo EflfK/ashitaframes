@@ -1,6 +1,6 @@
 addon.name      = 'ashitaframes';
 addon.author    = 'EflfK';
-addon.version   = '0.8.2';
+addon.version   = '0.8.3';
 addon.desc      = 'Party and target unit frames for Ashita with attended self-buff cancellation.';
 addon.link      = 'https://github.com/EflfK/ashitaframes';
 
@@ -6430,6 +6430,29 @@ function set_observed_target_debuff_name(name, key_or_status_id, enabled, spell_
     return true;
 end
 
+function set_observed_target_debuff_for_name(name, key_or_status_id, enabled, spell_id)
+    local name_key = observed_target_name_key(name);
+    if (name_key == nil) then
+        return false;
+    end
+
+    local current_name, server_id = current_target_identity();
+    local is_current_target = name_key == observed_target_name_key(current_name)
+        and tonumber(server_id) ~= nil
+        and tonumber(server_id) ~= 0;
+
+    if (enabled == true and is_current_target) then
+        return set_observed_target_debuff(server_id, key_or_status_id, true, spell_id);
+    end
+
+    local handled = set_observed_target_debuff_name(name, key_or_status_id, enabled, spell_id);
+    if (enabled ~= true and is_current_target) then
+        handled = set_observed_target_debuff(server_id, key_or_status_id, false, spell_id) or handled;
+    end
+
+    return handled;
+end
+
 function clear_observed_target_debuff_name(name)
     local name_key = observed_target_name_key(name);
     if (name_key == nil or state.observed_target_debuff_names[name_key] == nil) then
@@ -6446,7 +6469,7 @@ function clear_observed_target_debuff_name_status(name, status)
         return false;
     end
 
-    return set_observed_target_debuff_name(name, status_id, false);
+    return set_observed_target_debuff_for_name(name, status_id, false);
 end
 
 function clear_observed_target_debuff_status(server_id, status_id)
@@ -7251,25 +7274,41 @@ function process_observed_target_debuff_text(message)
         return true;
     end
 
+    local target_status;
+    target, target_status = text:match('^(.-) is afflicted with (.-)%.$');
+    if (target == nil or target_status == nil) then
+        target, target_status = text:match('^(.-) receives the effect of (.-)%.$');
+    end
+    if (target ~= nil and target_status ~= nil) then
+        local status_id = buff_id_from_name(target_status);
+        if (status_id ~= nil) then
+            return set_observed_target_debuff_for_name(target, status_id, true);
+        end
+    end
+
     target = text:match('^(.-) takes %d+ points of damage%.$');
     local pending = pending_target_matches(target, 'dia');
     if (pending ~= nil) then
         state.pending_target_debuff_cast = nil;
-        return set_observed_target_debuff_name(target, pending.key, true, pending.spell_id);
+        return set_observed_target_debuff_for_name(target, pending.key, true, pending.spell_id);
     end
 
     target = text:match('^(.-) is paralyzed%.$');
     pending = pending_target_matches(target, 'paralyze');
     if (pending ~= nil) then
         state.pending_target_debuff_cast = nil;
-        return set_observed_target_debuff_name(target, pending.key, true, pending.spell_id);
+        return set_observed_target_debuff_for_name(target, pending.key, true, pending.spell_id);
+    elseif (target ~= nil) then
+        return set_observed_target_debuff_for_name(target, 'paralyze', true);
     end
 
     target = text:match('^(.-) is slowed%.$');
     pending = pending_target_matches(target, 'slow');
     if (pending ~= nil) then
         state.pending_target_debuff_cast = nil;
-        return set_observed_target_debuff_name(target, pending.key, true, pending.spell_id);
+        return set_observed_target_debuff_for_name(target, pending.key, true, pending.spell_id);
+    elseif (target ~= nil) then
+        return set_observed_target_debuff_for_name(target, 'slow', true);
     end
 
     return false;

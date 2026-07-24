@@ -139,7 +139,10 @@ foreach ($messageId in @(2, 127, 160, 164, 166, 186, 194, 203, 205, 230, 236, 23
 foreach ($needle in @(
     "local packet_data = e.data or e.data_modified",
     "handle_target_debuff_action_packet(packet_data)",
-    "handle_target_debuff_message_packet(packet_data)"
+    "handle_target_debuff_message_packet(packet_data)",
+    "set_observed_target_debuff_for_name",
+    "text:match('^(.-) is afflicted with (.-)%.$')",
+    "text:match('^(.-) receives the effect of (.-)%.$')"
 )) {
     if (-not $lua.Contains($needle)) {
         throw "Expected passive original-packet observation pattern not found: $needle"

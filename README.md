@@ -393,7 +393,9 @@ does not expose a complete target-status snapshot to the client, effects already
 active before AshitaFrames loads may not appear until they are applied again.
 AshitaFrames passively reads the original packet even when a combat-log addon
 such as SimpleLog blocks or rewrites it for display; AshitaFrames does not
-change the packet or its blocked state.
+change the packet or its blocked state. It also consumes SimpleLog-compatible
+status result text such as `is afflicted with Flash` and `receives the effect
+of Elegy` as a fallback when packet variants differ.
 Supported target
 debuff reminder keys are currently `dia`, `paralyze`, and `slow`; configured
 reminders only display on attackable targets when the spell is learned, usable
